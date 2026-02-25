@@ -1,0 +1,64 @@
+@import url("https://fonts.googleapis.com/css2?family=Jua&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Montserrat+Alternates:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --font-montserrat-alternates: 'Montserrat Alternates', sans-serif;
+  --font-jua: 'Jua', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+html, body, #__next {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+canvas {
+  display: block;
+}
+
+/* Основной шрифт страницы - Montserrat Alternates для всего */
+body {
+  font-family: var(--font-montserrat-alternates) !important;
+}
+
+/* Исключение ТОЛЬКО для логотипа Visio */
+.jua-font {
+  font-family: var(--font-jua) !important;
+}
+
+/* Принудительно применяем Montserrat Alternates ко всем элементам */
+* {
+  font-family: var(--font-montserrat-alternates) !important;
+}
+
+/* Исключение для логотипа */
+.jua-font,
+.jua-font * {
+  font-family: var(--font-jua) !important;
+}
+
+@media (max-width: 376px) {
+  .header-overlay-responsive {
+    min-height: 80px;
+  }
+  
+  .header-content-responsive {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .header-buttons-responsive {
+    justify-content: center;
+    margin-top: 8px;
+  }
+}
