@@ -1,0 +1,330 @@
+@import "tailwindcss";
+
+@theme {
+  --font-poppins: "Poppins", sans-serif;
+  --color-primary: linear-gradient(135deg, #0a1a3d 0%, #0d2659 25%, #0f3b73 75%, #0ea5e9 100%);
+
+  --shadow-form: 0 0 30px rgba(255, 255, 255, 0.1);
+  --shadow-btn: 0 0 10px rgba(255, 255, 255, 0.05);
+}
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: var(--font-poppins);
+    text-decoration: none;
+    list-style: none;
+  }
+}
+
+@layer components {
+  .form-container {
+    position: relative;
+    width: 100%;
+    height:100%;
+     background: #0a0f2b !important;
+    border-radius: 30px;
+    box-shadow: var(--shadow-form);
+    overflow: hidden;
+    border: 1px solid #333;
+    z-index: 1;
+  }
+
+  .form-box {
+    position: absolute;
+    right: 0;
+    width: 40%;
+    height: 100%;
+     background: #0a0f2b !important;
+    display: flex;
+    align-items: center;
+    color: white;
+    text-align: center;
+    padding: 40px;
+    z-index: 10;
+    transition: 0.6s ease-in-out 1.2s, visibility 0s 1s;
+  }
+
+  .form-container.active .form-box {
+    right: 50%;
+  }
+
+  .form-box.register {
+    visibility: hidden;
+  }
+
+  .form-container.active .form-box.register {
+    visibility: visible;
+  }
+
+  .input-box {
+    position: relative;
+    margin: 30px 0;
+  }
+
+  .input-box input {
+    width: 100%;
+    padding: 13px 50px 13px 20px;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid white;
+    outline: none;
+    font-size: 16px;
+    color: #000; /* ИСПРАВЛЕНО: было #0000 (прозрачный), теперь черный */
+    font-weight: 500;
+    transition: all 0.3s ease;
+  }
+
+  .input-box input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 5px rgba(17, 38, 224, 0.3);
+  }
+
+  .input-box input::placeholder {
+    color: #666;
+    font-weight: 400;
+  }
+
+  .input-box i {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 20px;
+    color: #666;
+  }
+
+  .btn-primary {
+    width: 100%;
+    height: 48px;
+    background: var(--color-primary);
+    border-radius: 8px;
+    box-shadow: var(--shadow-btn);
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    color: white;
+    font-weight: 600;
+    transition: all 0.3s ease;
+  }
+
+  .btn-primary:hover {
+    background: #7a3aed;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(100, 17, 224, 0.4);
+  }
+
+  .btn-outline {
+    width: 160px;
+    height: 46px;
+    background: transparent;
+    border: 2px solid white;
+    box-shadow: none;
+    transition: all 0.3s ease;
+  }
+
+  .btn-outline:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .social-icons a {
+    display: inline-flex;
+    padding: 10px;
+    border: 2px solid #333;
+    border-radius: 8px;
+    font-size: 24px;
+    color: #666;
+    margin: 0 8px;
+    transition: all 0.3s ease;
+  }
+
+  .social-icons a:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    transform: translateY(-2px);
+  }
+
+  .toggle-box::before {
+    content: '';
+    position: absolute;
+    left: -250%;
+    width: 300%;
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: 150px;
+    z-index: 20;
+    transition: 1.8s ease-in-out;
+  }
+
+  .form-container.active .toggle-box::before {
+    left: 50%;
+  }
+
+  .toggle-panel {
+    position: absolute;
+    width: 50%;
+    height: 100%;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 20;
+    transition: 0.6s ease-in-out;
+  }
+
+  .toggle-left {
+    left: 0;
+    transition-delay: 1.2s;
+  }
+
+  .form-container.active .toggle-left {
+    left: -50%;
+    transition-delay: 0.6s;
+  }
+
+  .toggle-right {
+    right: -50%;
+    transition-delay: 0.6s;
+  }
+
+  .form-container.active .toggle-right {
+    right: 0;
+    transition-delay: 1.2s;
+  }
+
+  .forgot-link a {
+    transition: color 0.3s ease;
+  }
+
+  .forgot-link a:hover {
+    color: var(--color-primary) !important;
+  }
+}
+
+/* Mobile Responsive */
+@media screen and (max-width: 650px) {
+  .form-container {
+    height: calc(100vh - 40px);
+  }
+
+  .form-box {
+    bottom: 0;
+    width: 100%;
+    height: 70%;
+  }
+
+  .form-container.active .form-box {
+    right: 0;
+    bottom: 30%;
+  }
+
+  .toggle-box::before {
+    left: 0;
+    top: -270%;
+    width: 100%;
+    height: 300%;
+    border-radius: 20vw;
+  }
+
+  .form-container.active .toggle-box::before {
+    left: 0;
+    top: 70%;
+  }
+
+  .form-container.active .toggle-left {
+    left: 0;
+    top: -30%;
+  }
+
+  .toggle-panel {
+    width: 100%;
+    height: 30%;
+  }
+
+  .toggle-left {
+    top: 0;
+  }
+
+  .toggle-right {
+    right: 0;
+    bottom: -30%;
+  }
+
+  .form-container.active .toggle-right {
+    bottom: 0;
+  }
+}
+
+@media screen and (max-width: 400px) {
+  .form-box {
+    padding: 20px;
+  }
+
+  .toggle-panel h1 {
+    font-size: 30px;
+  }
+}
+
+.glass-btn {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+/* Remove all purple backgrounds - make completely transparent */
+.btn-primary {
+  width: 100%;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.back-home-btn {
+  background: rgba(25, 21, 56, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 8px;
+  padding: 8px 16px;
+  transition: all 0.3s ease;
+}
+
+.back-home-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+@media screen and (max-width: 320px) {
+  .toggle-panel h1 {
+    font-size: 24px !important;
+    text-align: center;
+    padding: 0 10px;
+  }
+}

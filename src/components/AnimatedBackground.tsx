@@ -102,6 +102,7 @@ type AnimatedBackgroundProps = {
   scanlineFrequency?: number;
   warpAmount?: number;
   resolutionScale?: number;
+  performanceMode?: "auto" | "high" | "low";
   className?: string;
 };
 
@@ -113,6 +114,7 @@ export default function AnimatedBackground({
   scanlineFrequency = 1.5,
   warpAmount = 0.3,
   resolutionScale = 1,
+  performanceMode = "auto",
   className = ""
 }: AnimatedBackgroundProps) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -122,8 +124,32 @@ export default function AnimatedBackground({
     const canvas = ref.current;
     if (!canvas) return;
 
+    const nav = navigator as Navigator & {
+      deviceMemory?: number;
+      hardwareConcurrency?: number;
+    };
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const isSmallScreen = window.innerWidth <= 768;
+    const lowPowerAutoDetected =
+      prefersReducedMotion ||
+      (typeof nav.deviceMemory === "number" && nav.deviceMemory <= 4) ||
+      (typeof nav.hardwareConcurrency === "number" &&
+        nav.hardwareConcurrency <= 4 &&
+        isSmallScreen);
+    const useLowPower = performanceMode === "low" || (performanceMode === "auto" && lowPowerAutoDetected);
+    const dprCap = useLowPower ? 1.25 : 2;
+    const effectiveResolutionScale = Math.max(
+      0.45,
+      Math.min(
+        resolutionScale,
+        useLowPower ? (isSmallScreen ? 0.7 : 0.8) : 1
+      )
+    );
+    const targetFps = useLowPower ? 24 : 45;
+    const frameIntervalMs = 1000 / targetFps;
+
     const renderer = new Renderer({
-      dpr: Math.min(window.devicePixelRatio, 2),
+      dpr: Math.min(window.devicePixelRatio || 1, dprCap),
       canvas,
     });
 
@@ -150,32 +176,68 @@ export default function AnimatedBackground({
     const resize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      renderer.setSize(w * resolutionScale, h * resolutionScale);
+      renderer.setSize(w * effectiveResolutionScale, h * effectiveResolutionScale);
       program.uniforms.uResolution.value.set(w, h);
     };
+    let resizeFrame = 0;
+    const handleResize = () => {
+      if (resizeFrame) {
+        cancelAnimationFrame(resizeFrame);
+      }
+      resizeFrame = requestAnimationFrame(() => {
+        resize();
+      });
+    };
 
-    window.addEventListener("resize", resize);
+    window.addEventListener("resize", handleResize);
     resize();
 
     const start = performance.now();
-    let frame: number;
+    let frame = 0;
+    let lastRenderAt = 0;
+    let isPageVisible = !document.hidden;
 
-    const loop = () => {
-      program.uniforms.uTime.value = ((performance.now() - start) / 1000) * speed;
+    const render = (timestamp: number) => {
+      program.uniforms.uTime.value = ((timestamp - start) / 1000) * speed;
       program.uniforms.uHueShift.value = hueShift + getWaveHueShift(waveColor);
       program.uniforms.uNoise.value = noiseIntensity;
       program.uniforms.uScan.value = scanlineIntensity;
       program.uniforms.uScanFreq.value = scanlineFrequency;
       program.uniforms.uWarp.value = warpAmount;
       renderer.render({ scene: mesh });
+    };
+
+    const loop = (timestamp: number) => {
+      if (!isPageVisible) {
+        frame = requestAnimationFrame(loop);
+        return;
+      }
+      if (timestamp - lastRenderAt >= frameIntervalMs) {
+        lastRenderAt = timestamp;
+        render(timestamp);
+      }
       frame = requestAnimationFrame(loop);
     };
 
-    loop();
+    const handleVisibilityChange = () => {
+      isPageVisible = !document.hidden;
+      if (isPageVisible) {
+        lastRenderAt = 0;
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    if (prefersReducedMotion) {
+      render(performance.now());
+    } else {
+      frame = requestAnimationFrame(loop);
+    }
 
     return () => {
       cancelAnimationFrame(frame);
-      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(resizeFrame);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("resize", handleResize);
     };
   }, [
     hueShift, 
@@ -185,6 +247,7 @@ export default function AnimatedBackground({
     scanlineFrequency, 
     warpAmount, 
     resolutionScale,
+    performanceMode,
     waveColor // Добавляем зависимость от цвета волны
   ]);
 

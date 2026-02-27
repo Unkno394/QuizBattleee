@@ -15,37 +15,20 @@ type ThemeContextType = {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [isDarkTheme, setIsDarkTheme] = useState(true);
-  const [waveColor, setWaveColorState] = useState<WaveColor>('blue');
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem('theme') !== 'light';
+  });
+  const [waveColor, setWaveColorState] = useState<WaveColor>(() => {
+    if (typeof window === 'undefined') return 'blue';
+    const savedWaveColor = localStorage.getItem('waveColor') as WaveColor | null;
+    return savedWaveColor && ['blue', 'green', 'red', 'yellow', 'purple'].includes(savedWaveColor)
+      ? savedWaveColor
+      : 'blue';
+  });
 
   useEffect(() => {
-    // Проверяем сохраненную тему в localStorage при загрузке
-    const savedTheme = localStorage.getItem('theme');
-    const savedWaveColor = localStorage.getItem('waveColor') as WaveColor;
-    
-    if (savedTheme === 'light') {
-      setIsDarkTheme(false);
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
-    } else {
-      setIsDarkTheme(true);
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-    }
-    
-    if (savedWaveColor && ['blue', 'green', 'red', 'yellow', 'purple'].includes(savedWaveColor)) {
-      setWaveColorState(savedWaveColor);
-    }
-    
-    setIsInitialized(true);
-  }, []);
-
-  const toggleTheme = () => {
-    const newTheme = !isDarkTheme;
-    setIsDarkTheme(newTheme);
-    
-    if (newTheme) {
+    if (isDarkTheme) {
       document.documentElement.classList.add('dark');
       document.documentElement.classList.remove('light');
       localStorage.setItem('theme', 'dark');
@@ -54,17 +37,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       document.documentElement.classList.remove('dark');
       localStorage.setItem('theme', 'light');
     }
+  }, [isDarkTheme]);
+
+  useEffect(() => {
+    localStorage.setItem('waveColor', waveColor);
+  }, [waveColor]);
+
+  const toggleTheme = () => {
+    setIsDarkTheme((prev) => !prev);
   };
 
   const setWaveColor = (color: WaveColor) => {
     setWaveColorState(color);
-    localStorage.setItem('waveColor', color);
   };
-
-  // Не рендерим до инициализации темы
-  if (!isInitialized) {
-    return null;
-  }
 
   return (
     <ThemeContext.Provider value={{ isDarkTheme, toggleTheme, waveColor, setWaveColor }}>

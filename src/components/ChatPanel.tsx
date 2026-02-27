@@ -34,8 +34,8 @@ const getEmojiCategories = () => {
     'Часто': ['😂', '❤️', '🔥', '👍', '👏', '🎉', '🙏', '😍', '🥰', '🤩', '😊', '🙂'],
   };
 
-  Object.entries(emojiData).forEach(([emoji, data]: [string, any]) => {
-    const category = data.group;
+  Object.entries(emojiData).forEach(([emoji, data]) => {
+    const category = ((data as { group?: string }).group || 'Разное') as string;
     if (!categories[category]) {
       categories[category] = [];
     }
@@ -88,7 +88,7 @@ function Twemoji({ emoji, size = 20 }: { emoji: string; size?: number }) {
   );
 }
 
-function TwitterEmojiPicker({ onEmojiSelect, onClose }: { onEmojiSelect: (emoji: string) => void; onClose: () => void }) {
+function TwitterEmojiPicker({ onEmojiSelect }: { onEmojiSelect: (emoji: string) => void }) {
   const [activeCategory, setActiveCategory] = useState('Часто');
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -184,13 +184,6 @@ function EmojiText({ text, className = "" }: { text: string; className?: string 
   return <span className={`inline-flex items-center flex-wrap ${className}`}>{parts}</span>;
 }
 
-function InputEmojiText({ text }: { text: string }) {
-  if (!text) return null;
-
-  // In input we show raw text so the caret doesn't jump
-  return <span className="text-white">{text}</span>;
-}
-
 export function ChatPanel({ isOpen, messages, onSendMessage, participants, onClose, isChatBlocked }: ChatPanelProps) {
   const [message, setMessage] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -277,7 +270,7 @@ export function ChatPanel({ isOpen, messages, onSendMessage, participants, onClo
 
         <div className="absolute bottom-0 left-0 right-0 p-6 border-t border-white/10 bg-gray-900/80 backdrop-blur-md">
           {showEmojiPicker && !isChatBlocked && (
-            <TwitterEmojiPicker onEmojiSelect={addEmoji} onClose={() => setShowEmojiPicker(false)} />
+            <TwitterEmojiPicker onEmojiSelect={addEmoji} />
           )}
           
           <div className="flex gap-3 items-end">
@@ -386,7 +379,7 @@ export function ChatPanel({ isOpen, messages, onSendMessage, participants, onClo
 
           <div className="p-3 sm:p-4 border-t border-white/10 bg-gray-900/80 backdrop-blur-md">
             {showEmojiPicker && (
-              <TwitterEmojiPicker onEmojiSelect={addEmoji} onClose={() => setShowEmojiPicker(false)} />
+              <TwitterEmojiPicker onEmojiSelect={addEmoji} />
             )}
             
             <div className="flex gap-2 sm:gap-3 items-end">

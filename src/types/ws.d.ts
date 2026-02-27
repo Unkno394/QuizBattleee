@@ -31,7 +31,7 @@ declare module "ws" {
     clients: Set<WebSocket>;
     handleUpgrade(
       req: import("http").IncomingMessage,
-      socket: any,
+      socket: import("stream").Duplex,
       head: Buffer,
       cb: (ws: WebSocket) => void
     ): void;

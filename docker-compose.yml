@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: quizbattle-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quizbattle
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - qb_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quizbattle"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: quizbattle-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - qb_redis_data:/data
+
+  backend-python:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: quizbattle-backend-python
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      WS_PORT: 3001
+      MAX_PLAYERS: 20
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/quizbattle
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "3001:3001"
+
+  backend-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.node-backend
+    container_name: quizbattle-backend-node
+    restart: unless-stopped
+    environment:
+      WS_PORT: 3002
+    ports:
+      - "3002:3002"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: quizbattle-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend-python
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+      NEXT_PUBLIC_WS_URL: ws://localhost:3001/api/ws
+    ports:
+      - "3000:3000"
+
+volumes:
+  qb_pg_data:
+  qb_redis_data:

@@ -15,7 +15,7 @@ export function useCustomAlert() {
     onCancel?: () => void;
   } | null>(null);
 
-  const showAlert = (
+  const notify = (
     title: string,
     description: string,
     options: {
@@ -81,5 +81,5 @@ export function useCustomAlert() {
     />
   ) : null;
 
-  return { showAlert, showConfirm, alertComponent };
+  return { notify, showConfirm, alertComponent };
 }
