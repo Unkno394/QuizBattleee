@@ -110,6 +110,23 @@ QuizBattle поддерживает два источника вопросов:
 
 Временные файлы с AI-сгенерированными вопросами автоматически удаляются после завершения игры или очистки комнаты.
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="./public/secret/very_cool_foto_umba.png" alt="Фуллстек разработчик" width="260" />
+        <br />
+        <strong>Фуллстек разработчик и тимлид</strong>
+      </td>
+      <td align="center">
+        <img src="./public/secret/very_67_foto.png" alt="Дизайнер" width="260" />
+        <br />
+        <strong>Дизайнер</strong>
+      </td>
+    </tr>
+  </table>
+</div>
+
 ## Структура проекта
 ### Фронтенд
 - [src/app/page.tsx](/home/user/Desktop/123/quizbattle/src/app/page.tsx)  
@@ -228,73 +245,6 @@ npm run backend:stack:up
 npm run backend:stack:down
 ```
 
-## Полезные скрипты
-```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
-npm run ws-server
-npm run test:ws-load
-```
-
-## Переменные окружения
-### Базовые
-- `DATABASE_URL`
-- `REDIS_URL`
-- `WS_PORT`
-- `MAX_PLAYERS`
-- `NEXT_PUBLIC_API_BASE_URL`
-- `NEXT_PUBLIC_WS_URL`
-
-### Auth / email
-- `EMAIL_TRANSPORT`
-- `CODE_TTL_SECONDS`
-- `RESEND_COOLDOWN_SECONDS`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM`
-- `SMTP_USE_SSL`
-- `RESEND_API_KEY`
-- `RESEND_FROM`
-- `RESEND_API_URL`
-
-### AI-генерация вопросов
-- `AI_QUESTION_TIMEOUT_SECONDS`
-- `AI_QUESTION_TEMPERATURE`
-- `QUICK_GAME_REWARD_SECRET`
-
-Перебор провайдеров поддерживает до 6 конфигов:
-- `AI_QUESTION_PROVIDER_1_NAME`
-- `AI_QUESTION_PROVIDER_1_URL`
-- `AI_QUESTION_PROVIDER_1_MODEL`
-- `AI_QUESTION_PROVIDER_1_KEY`
-- `AI_QUESTION_PROVIDER_1_REFERER`
-- `AI_QUESTION_PROVIDER_1_TITLE`
-
-Аналогично для `_2` ... `_6`.
-
-Пример:
-```env
-AI_QUESTION_TIMEOUT_SECONDS=60
-AI_QUESTION_TEMPERATURE=0.8
-QUICK_GAME_REWARD_SECRET=change-me
-
-AI_QUESTION_PROVIDER_1_NAME=groq-70b
-AI_QUESTION_PROVIDER_1_URL=https://api.groq.com/openai/v1/chat/completions
-AI_QUESTION_PROVIDER_1_MODEL=llama-3.3-70b-versatile
-AI_QUESTION_PROVIDER_1_KEY=your_groq_key
-
-AI_QUESTION_PROVIDER_2_NAME=openrouter-deepseek
-AI_QUESTION_PROVIDER_2_URL=https://openrouter.ai/api/v1/chat/completions
-AI_QUESTION_PROVIDER_2_MODEL=deepseek/deepseek-chat
-AI_QUESTION_PROVIDER_2_KEY=your_openrouter_key
-AI_QUESTION_PROVIDER_2_REFERER=http://localhost:3000
-AI_QUESTION_PROVIDER_2_TITLE=QuizBattle
-```
-
 ## Хранение данных
 ### PostgreSQL
 Backend хранит:
@@ -311,52 +261,6 @@ Backend хранит:
 ### Redis
 Используется для кэша снапшотов комнат и поддержки hot state sync.
 
-## Валюта и победы
-### Валюта
-- `classic`, `chaos`, `ffa`
-  - валюта начисляется на backend после завершения игры
-  - награда зависит от заработанных очков
-- `quick-game`
-  - итоговые очки конвертируются в валюту `1:1`
-  - награда валидируется и выдаётся на backend один раз
-
-### Победы
-- `classic`, `chaos`
-  - все зарегистрированные игроки победившей команды получают `+1`
-- `ffa`
-  - все зарегистрированные игроки с максимальным счётом получают `+1`
-- `quick-game`
-  - не влияет на победы и рейтинг
-
-## AI-генерация: примечания
-- Генерация своей темы полностью backend-driven.
-- Фронтенд только передаёт тему / сложность / количество вопросов.
-- Если все AI-провайдеры упали, фронтенд переключается на готовые темы.
-- Ошибки провайдеров пишутся в backend-логах как:
-  - `question_generation attempt=...`
-  - `question_generation failed ... reason=...`
-
-Полезная команда:
-```bash
-docker logs quizbattle-backend-python --tail=200 | rg "question_generation|reason="
-```
-
-## Проверки и тесты
-Проверка Python-синтаксиса:
-```bash
-python3 -m py_compile backend/app/*.py backend/app/api/*.py
-```
-
-Проверка TypeScript:
-```bash
-npx tsc --noEmit
-```
-
-Нагрузочный тест:
-```bash
-npm run test:ws-load
-```
-
 ## Важные детали реализации
 - Состояние комнаты определяется сервером.
 - Обновления state рассылаются backend runtime через WebSocket.
@@ -364,10 +268,7 @@ npm run test:ws-load
 - AI-сгенерированные наборы вопросов временные и автоматически удаляются.
 - Награды quick-game защищены backend-подписанными одноразовыми reward token.
 
-## Безопасность
-- Не коммить реальные API-ключи в `.env`.
-- Если ключи уже попали в логи, скриншоты или чат, их нужно перевыпустить.
-- Для production задай сильный `QUICK_GAME_REWARD_SECRET`.
-
-## Лицензия
-В репозитории нет отдельного файла лицензии.
+<div align="center">
+  <h2>Команда VibeCode team</h2>
+  <img src="./public/secret/very_omg.jpg" alt="Команда VibeCode team" width="420" />
+</div>
