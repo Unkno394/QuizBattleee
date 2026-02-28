@@ -35,7 +35,7 @@ def apply_snapshot(room: RoomRuntime, state: dict[str, Any]) -> None:
     if not isinstance(state, dict):
         return
 
-    room.topic = normalize_topic(state.get("topic", room.topic))
+    room.topic = normalize_topic(state.get("topic", room.topic), allow_custom=True)
     room.difficulty_mode = normalize_difficulty_mode(
         state.get("difficultyMode", room.difficulty_mode)
     )
@@ -87,6 +87,13 @@ def apply_snapshot(room: RoomRuntime, state: dict[str, Any]) -> None:
     )
     room.host_token_hash = str(state.get("hostTokenHash") or room.host_token_hash or "")
     room.room_password_hash = str(state.get("roomPasswordHash") or room.room_password_hash or "")
+    question_source_raw = str(state.get("questionSource") or room.question_source or "catalog").strip().lower()
+    room.question_source = "generated" if question_source_raw == "generated" else "catalog"
+    has_password_raw = state.get("isPasswordProtected")
+    if isinstance(has_password_raw, bool):
+        room.is_password_protected = has_password_raw
+    else:
+        room.is_password_protected = bool(room.room_password_hash)
     room.paused_state = state.get("pausedState") if isinstance(state.get("pausedState"), dict) else None
     room.manual_pause_by_name = (
         str(state.get("manualPauseByName"))
@@ -268,6 +275,8 @@ def serialize_snapshot(room: RoomRuntime) -> dict[str, Any]:
         "hostReconnectEndsAt": room.host_reconnect_ends_at,
         "hostTokenHash": room.host_token_hash,
         "roomPasswordHash": room.room_password_hash,
+        "isPasswordProtected": bool(room.is_password_protected or room.room_password_hash),
+        "questionSource": room.question_source,
         "disconnectedHostName": room.disconnected_host_name,
         "disconnectedHostExpectedName": room.disconnected_host_expected_name,
         "pausedState": room.paused_state,

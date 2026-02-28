@@ -6,11 +6,15 @@ export type ProfileFrameId =
   | "profile_frame_glitch_edge"
   | "profile_frame_champion_laurel";
 export type VictoryEffectLayer = "front" | "back";
-export type FrameTuningVariant = "avatar" | "shop";
+export type FrameTuningVariant = "avatar" | "shop" | "room";
 export type MarketMascotOverlayTuning = {
   scale: number;
   offsetY: number;
 };
+const MARKET_ASSET_VERSION = "20260227-2";
+
+const withMarketAssetVersion = (path: string) =>
+  `${path}${path.includes("?") ? "&" : "?"}v=${MARKET_ASSET_VERSION}`;
 
 export const PROFILE_FRAME_CLASS: Record<ProfileFrameId, string> = {
   profile_frame_aurora: "qb-frame qb-frame--aurora qb-frame--impulse",
@@ -76,20 +80,35 @@ const PROFILE_FRAME_FX_TUNING_VARIANT: Partial<
 > = {
   avatar: {
     profile_frame_aurora: {
-      overscan: 8,
-      scale: 0.94,
+      thickness: 12,
+      overscan: 12,
+      scale: 0.98,
     },
     profile_frame_gold: {
       overscan: 12,
       scale: 0.95,
     },
     profile_frame_glitch_edge: {
-      overscan: 12,
-      scale: 0.94,
+      overscan: 18,
+      scale: 1.08,
     },
     profile_frame_champion_laurel: {
-      overscan: 19,
-      scale: 1.14,
+      overscan: 24,
+      scale: 1.24,
+    },
+  },
+  room: {
+    profile_frame_aurora: {
+      overscan: 8,
+      scale: 0.94,
+    },
+    profile_frame_glitch_edge: {
+      overscan: 10,
+      scale: 0.92,
+    },
+    profile_frame_champion_laurel: {
+      overscan: 18,
+      scale: 1.05,
     },
   },
 };
@@ -115,18 +134,22 @@ const MARKET_FRAME_COUNTS: Record<
   cat_header_1: { common: 2, happy: 4, sad: 12, sleep: 4 },
   cat_header_2: { common: 2, happy: 4, sad: 12, sleep: 4 },
   cat_neck_1: { common: 2, happy: 4, sad: 12, sleep: 4 },
+  cat_body_1: { common: 2, happy: 4, sad: 12, sleep: 4 },
   dog_header_1: { common: 2, happy: 3, sad: 11, sleep: 4 },
   dog_header_2: { common: 2, happy: 3, sad: 12, sleep: 4 },
   dog_neck_1: { common: 2, happy: 3, sad: 12, sleep: 4 },
+  dog_body_1: { common: 2, happy: 3, sad: 10, sleep: 4 },
 };
 
 const MARKET_MASCOT_OVERLAY_TUNING: Record<string, MarketMascotOverlayTuning> = {
   cat_header_1: { scale: 0.97, offsetY: -1 },
   cat_header_2: { scale: 1, offsetY: 0 },
   cat_neck_1: { scale: 1.21, offsetY: 3 },
+  cat_body_1: { scale: 1.08, offsetY: 2 },
   dog_header_1: { scale: 1.38, offsetY: 20 },
   dog_header_2: { scale: 1.4, offsetY: 20 },
   dog_neck_1: { scale: 1.3, offsetY: 11 },
+  dog_body_1: { scale: 1.06, offsetY: 2 },
 };
 
 const DEFAULT_MARKET_MASCOT_OVERLAY_TUNING: MarketMascotOverlayTuning = {
@@ -159,7 +182,10 @@ export const getMarketMascotOverlayTuning = (
 
 export const getMarketCommonFrames = (itemId: string) => {
   const count = Math.max(1, MARKET_FRAME_COUNTS[itemId]?.common || 1);
-  return Array.from({ length: count }, (_, index) => `/market/${itemId}/common/${index + 1}.png`);
+  return Array.from(
+    { length: count },
+    (_, index) => withMarketAssetVersion(`/market/${itemId}/common/${index + 1}.png`)
+  );
 };
 
 export const buildMarketOverlayFrames = (
@@ -175,7 +201,7 @@ export const buildMarketOverlayFrames = (
     const frameIndex = sourceFrameNumber
       ? Math.max(1, Math.min(moodCount, sourceFrameNumber))
       : (index % moodCount) + 1;
-    return `/market/${itemId}/${mood}/${frameIndex}.png`;
+    return withMarketAssetVersion(`/market/${itemId}/${mood}/${frameIndex}.png`);
   });
 };
 

@@ -7,10 +7,21 @@ services:
       POSTGRES_DB: quizbattle
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - max_connections=50
+      - -c
+      - effective_cache_size=512MB
     volumes:
       - qb_pg_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    mem_limit: 512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d quizbattle"]
       interval: 5s

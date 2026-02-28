@@ -48,6 +48,7 @@ from .auth_repository import (
     ensure_owned_item_ids as repo_ensure_owned_item_ids,
     get_email_code as repo_get_email_code,
     get_owned_item_ids as repo_get_owned_item_ids,
+    get_user_wins_leaderboard as repo_get_user_wins_leaderboard,
     get_user_by_email as repo_get_user_by_email,
     get_user_by_id as repo_get_user_by_id,
     mark_email_verified as repo_mark_email_verified,
@@ -90,7 +91,7 @@ _load_auth_env()
 PURPOSE_VERIFY_EMAIL = "verify_email"
 PURPOSE_RESET_PASSWORD = "reset_password"
 
-CODE_TTL_SECONDS = int(os.getenv("CODE_TTL_SECONDS", "300"))
+CODE_TTL_SECONDS = int(os.getenv("CODE_TTL_SECONDS", "1200"))
 RESEND_COOLDOWN_SECONDS = int(os.getenv("RESEND_COOLDOWN_SECONDS", "30"))
 SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "20"))
 HTTP_TIMEOUT_SECONDS = int(os.getenv("HTTP_TIMEOUT_SECONDS", "20"))
@@ -481,7 +482,7 @@ async def register(payload: RegisterRequest) -> dict[str, object]:
 
     return {
         "ok": True,
-        "message": "Код подтверждения отправлен на почту",
+        "message": "Код подтверждения отправлен на почту. Проверьте папку Спам, если письма нет.",
         "expires_in": CODE_TTL_SECONDS,
     }
 
@@ -502,7 +503,7 @@ async def resend_verification(payload: EmailRequest) -> dict[str, object]:
     await _send_code(email, PURPOSE_VERIFY_EMAIL)
     return {
         "ok": True,
-        "message": "Код отправлен повторно",
+        "message": "Код отправлен повторно. Проверьте папку Спам, если письма нет.",
         "expires_in": CODE_TTL_SECONDS,
     }
 
@@ -528,9 +529,14 @@ async def verify_email(payload: VerifyCodeRequest) -> dict[str, object]:
 @router.get("/me")
 async def me(authorization: str | None = Header(default=None)) -> dict[str, object]:
     user = await _get_current_user(authorization)
+    user_id = int(user["id"])
+    leaderboard_rows = await repo_get_user_wins_leaderboard(limit=1, only_user_ids=[user_id])
+    wins_total = max(0, int(leaderboard_rows[0]["wins"] or 0)) if leaderboard_rows else 0
+    serialized_user = _serialize_user(user)
+    serialized_user["wins_total"] = wins_total
     return {
         "ok": True,
-        "user": _serialize_user(user),
+        "user": serialized_user,
     }
 
 
@@ -668,10 +674,23 @@ async def update_profile(
     avatar_to_save = payload.avatar_url if payload.avatar_url is not None else None
     if avatar_to_save is not None and len(avatar_to_save) > MAX_AVATAR_URL_LENGTH:
         raise HTTPException(status_code=400, detail="Аватар слишком большой. Выберите изображение меньше.")
-    if display_name_to_save is None and avatar_to_save is None:
+    update_preferred_mascot = payload.preferred_mascot is not None
+    preferred_mascot_to_save: str | None = None
+    if payload.preferred_mascot is not None:
+        preferred_value = str(payload.preferred_mascot or "").strip().lower()
+        if preferred_value not in {"cat", "dog"}:
+            raise HTTPException(status_code=400, detail="preferred_mascot должен быть cat или dog")
+        preferred_mascot_to_save = preferred_value
+    if display_name_to_save is None and avatar_to_save is None and not update_preferred_mascot:
         raise HTTPException(status_code=400, detail="Нет данных для обновления")
 
-    row = await repo_update_profile(int(user["id"]), display_name_to_save, avatar_to_save)
+    row = await repo_update_profile(
+        int(user["id"]),
+        display_name_to_save,
+        avatar_to_save,
+        preferred_mascot_to_save,
+        update_preferred_mascot,
+    )
 
     if row is None:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -789,13 +808,13 @@ async def forgot_password(payload: EmailRequest) -> dict[str, object]:
     if user is None or not user["is_email_verified"]:
         return {
             "ok": True,
-            "message": "Если аккаунт существует, код отправлен на почту",
+            "message": "Если аккаунт существует, код отправлен на почту. Проверьте папку Спам, если письма нет.",
         }
 
     await _send_code(email, PURPOSE_RESET_PASSWORD)
     return {
         "ok": True,
-        "message": "Письмо с кодом отправлено. Проверьте почту.",
+        "message": "Письмо с кодом отправлено. Проверьте почту, включая папку Спам.",
         "expires_in": CODE_TTL_SECONDS,
     }
 

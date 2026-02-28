@@ -18,6 +18,7 @@ export type MascotMood = "common" | "happy" | "sad" | "sleep";
 
 export type Player = {
   peerId: string;
+  authUserId?: number | null;
   name: string;
   team: Team | null;
   isHost: boolean;
@@ -116,6 +117,7 @@ export type RoomState = {
   manualPauseByName?: string | null;
   scores: Record<Team, number>;
   playerScores?: Record<string, number>;
+  hasPassword?: boolean;
   players: Player[];
   currentQuestion: Question | null;
   lastReveal: RevealInfo | null;
@@ -239,8 +241,21 @@ export type ModerationNoticeMessage = {
   disqualified?: boolean;
 };
 
+export type FriendRequestReceivedMessage = {
+  type: "friend_request_received";
+  requester_id: number;
+};
+
+export type FriendRequestResolvedMessage = {
+  type: "friend_request_resolved";
+  requester_id: number;
+  status: "accepted" | "declined";
+};
+
 export type ServerMessage =
   | ConnectedMessage
   | StateSyncMessage
   | ModerationNoticeMessage
+  | FriendRequestReceivedMessage
+  | FriendRequestResolvedMessage
   | { type: "error"; code?: string; message: string };

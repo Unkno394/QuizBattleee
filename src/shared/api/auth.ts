@@ -1,3 +1,5 @@
+import { buildApiUrl } from "./base";
+
 type HttpMethod = "GET" | "POST" | "PATCH";
 export type ApiError = Error & { status?: number };
 
@@ -30,6 +32,8 @@ export interface ProfileUser {
   email: string;
   display_name: string;
   avatar_url: string | null;
+  preferred_mascot?: "cat" | "dog" | null;
+  wins_total?: number;
   coins?: number;
   profile_frame?: string | null;
   equipped_cat_skin?: string | null;
@@ -76,8 +80,6 @@ export type LeaderboardEntry = {
   isMe?: boolean;
 };
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:3001").replace(/\/$/, "");
-
 const resolveMessage = async (response: Response) => {
   try {
     const data = await response.json();
@@ -89,7 +91,7 @@ const resolveMessage = async (response: Response) => {
   return `Ошибка запроса (${response.status})`;
 };
 
-const getStoredAccessToken = () => {
+export const getStoredAccessToken = () => {
   if (typeof window === "undefined") return "";
   const raw = window.localStorage.getItem("access_token");
   if (!raw) return "";
@@ -112,7 +114,7 @@ async function request<T>(
     headers.Authorization = /^Bearer\s+/i.test(authToken) ? authToken : `Bearer ${authToken}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -156,7 +158,7 @@ export const getProfile = (token?: string) =>
   request<{ ok: boolean; user: ProfileUser }>("/api/auth/me", "GET", undefined, token);
 
 export const updateProfile = (
-  payload: { display_name?: string; avatar_url?: string | null },
+  payload: { display_name?: string; avatar_url?: string | null; preferred_mascot?: "cat" | "dog" },
   token?: string
 ) => request<{ ok: boolean; user: ProfileUser }>("/api/auth/profile", "PATCH", payload, token);
 

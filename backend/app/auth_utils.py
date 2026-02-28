@@ -111,6 +111,7 @@ def serialize_user(row: Any) -> dict[str, object]:
         "email": row["email"],
         "display_name": row["display_name"],
         "avatar_url": row["avatar_url"],
+        "preferred_mascot": row.get("preferred_mascot"),
         "coins": int(row.get("coins", 0) or 0),
         "profile_frame": row.get("profile_frame"),
         "equipped_cat_skin": row.get("equipped_cat_skin"),

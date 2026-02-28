@@ -1,24 +1,28 @@
-from __future__ import annotations
-
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Header, HTTPException, Query
-
+from fastapi import APIRouter, Query, Header, HTTPException
+from app.database import get_auth_session_identity, ping_db
 from app.auth_repository import get_friend_user_ids, get_user_wins_leaderboard
-from app.database import get_auth_session_identity
 from app.runtime import runtime
-from app.redis_cache import is_redis_configured, ping_redis
+from app.redis_cache import is_redis_connected, ping_redis
 
 router = APIRouter(tags=["system"])
 
 
+def _optional_bearer_token(authorization: str | None) -> str | None:
+    if authorization is None:
+        return None
+    value = authorization.strip()
+    if not value:
+        return None
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    return value or None
+
+
 @router.get("/api/health")
 async def health() -> dict[str, object]:
-    from app.database import ping_db
-
     db_ok = await ping_db()
-    redis_ok = await ping_redis() if is_redis_configured() else False
-    redis_status = "disabled" if not is_redis_configured() else ("up" if redis_ok else "down")
+    redis_ok = await ping_redis() if is_redis_connected() else False
+    redis_status = "disabled" if not is_redis_connected() else ("up" if redis_ok else "down")
     ws_stats = await runtime.get_ws_stats()
     ws_summary = {
         "activeConnections": ws_stats["stats"].get("activeConnections", 0),
@@ -38,17 +42,6 @@ async def health() -> dict[str, object]:
 @router.get("/api/ws-stats")
 async def websocket_stats() -> dict[str, object]:
     return await runtime.get_ws_stats()
-
-
-def _optional_bearer_token(authorization: str | None) -> str | None:
-    if authorization is None:
-        return None
-    value = authorization.strip()
-    if not value:
-        return None
-    if value.lower().startswith("bearer "):
-        value = value[7:].strip()
-    return value or None
 
 
 @router.get("/api/leaderboard")
@@ -96,6 +89,8 @@ async def leaderboard(
                 "isMe": viewer_user_id is not None and user_id == viewer_user_id,
             }
         )
+
+    from datetime import datetime, timezone
 
     return {
         "ok": True,

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ThemeProvider } from '@/contexts/ThemeContext'; // Добавьте этот импорт
+import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export const metadata: Metadata = {
   title: "QuizBattle",
@@ -11,7 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru">
       <body className="antialiased">
-        <ThemeProvider> {/* Оберните children в ThemeProvider */}
+        <ThemeProvider>
           {children}
         </ThemeProvider>
       </body>

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from .runtime_constants import CAPTAIN_VOTE_TIME_MS, TEAM_NAMING_TIME_MS, TEAM_REVEAL_TIME_MS
 from .runtime_utils import create_mock_questions, now_ms
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .runtime import QuizRuntime
@@ -23,9 +26,10 @@ async def advance_after_reveal(runtime: "QuizRuntime", room: "RoomRuntime") -> N
             room.question_ends_at = None
             room.active_answer = None
             room.answer_submissions = {}
+            logger.warning("advance_after_reveal -> results room=%s mode=ffa", room.room_id)
             runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
+            runtime._schedule_persist_game_result(room)
             await runtime._broadcast_and_persist(room)
-            await runtime._persist_game_result(room)
             return
 
         room.current_question_index += 1
@@ -42,9 +46,10 @@ async def advance_after_reveal(runtime: "QuizRuntime", room: "RoomRuntime") -> N
             room.question_ends_at = None
             room.active_answer = None
             room.answer_submissions = {}
+            logger.warning("advance_after_reveal -> results room=%s mode=chaos", room.room_id)
             runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
+            runtime._schedule_persist_game_result(room)
             await runtime._broadcast_and_persist(room)
-            await runtime._persist_game_result(room)
             return
 
         room.current_question_index += 1
@@ -64,9 +69,10 @@ async def advance_after_reveal(runtime: "QuizRuntime", room: "RoomRuntime") -> N
             room.question_ends_at = None
             room.active_answer = None
             room.answer_submissions = {}
+            logger.warning("advance_after_reveal -> results room=%s mode=classic skipped_by_host=1", room.room_id)
             runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
+            runtime._schedule_persist_game_result(room)
             await runtime._broadcast_and_persist(room)
-            await runtime._persist_game_result(room)
             return
 
         room.current_question_index += 1
@@ -93,9 +99,10 @@ async def advance_after_reveal(runtime: "QuizRuntime", room: "RoomRuntime") -> N
         room.question_ends_at = None
         room.active_answer = None
         room.answer_submissions = {}
+        logger.warning("advance_after_reveal -> results room=%s mode=classic skipped_by_host=0", room.room_id)
         runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
+        runtime._schedule_persist_game_result(room)
         await runtime._broadcast_and_persist(room)
-        await runtime._persist_game_result(room)
         return
 
     room.current_question_index += 1
@@ -133,6 +140,12 @@ async def start_team_naming_phase(runtime: "QuizRuntime", room: "RoomRuntime") -
     room.captain_vote_ends_at = None
     room.team_naming_ends_at = now_ms() + TEAM_NAMING_TIME_MS
     runtime._initialize_team_naming_progress(room)
+    logger.warning(
+        "start_team_naming_phase room=%s captains=%s ready=%s",
+        room.room_id,
+        room.captains,
+        room.team_naming_ready_teams,
+    )
 
     if runtime._are_all_teams_ready(room.team_naming_ready_teams):
         await runtime._finalize_team_naming(room)
@@ -146,6 +159,14 @@ async def finalize_captain_vote(runtime: "QuizRuntime", room: "RoomRuntime") -> 
     if room.phase != "captain-vote":
         return
 
+    logger.warning(
+        "finalize_captain_vote room=%s game_mode=%s votes=%s captains_before=%s ready_before=%s",
+        room.room_id,
+        room.game_mode,
+        room.captain_votes,
+        room.captains,
+        room.captain_vote_ready_teams,
+    )
     runtime._cancel_timer(room, "captainVote")
     runtime._cancel_timer(room, "captainAuto")
 
@@ -162,6 +183,11 @@ async def finalize_captain_vote(runtime: "QuizRuntime", room: "RoomRuntime") -> 
     }
     room.captain_vote_ready_teams = {"A": True, "B": True}
     runtime._apply_captain_flags(room)
+    logger.warning(
+        "finalize_captain_vote done room=%s captains=%s",
+        room.room_id,
+        room.captains,
+    )
 
     await runtime._start_team_naming_phase(room)
 
@@ -173,20 +199,31 @@ async def start_captain_vote(runtime: "QuizRuntime", room: "RoomRuntime") -> Non
 
     room.phase = "captain-vote"
     room.team_reveal_ends_at = None
-    room.captain_vote_ends_at = now_ms() + CAPTAIN_VOTE_TIME_MS
+    captain_vote_timeout_ms = runtime._captain_vote_timeout_ms(room)
+    room.captain_vote_ends_at = now_ms() + captain_vote_timeout_ms
     room.team_naming_ends_at = None
     room.team_naming_ready_teams = {"A": False, "B": False}
     room.captains = {"A": None, "B": None}
     room.captain_vote_ready_teams = {"A": False, "B": False}
 
-    runtime._refresh_captain_vote_progress(room)
-    runtime._schedule_single_member_auto_captain(room)
+    team_sizes = {team: len(runtime._team_players(room, team)) for team in ("A", "B")}
+    single_member_fast_path = runtime._all_non_empty_teams_single_member(room)
+    if not single_member_fast_path:
+        runtime._refresh_captain_vote_progress(room)
+        runtime._schedule_single_member_auto_captain(room)
 
-    if runtime._are_all_teams_ready(room.captain_vote_ready_teams):
+    if not single_member_fast_path and runtime._are_all_teams_ready(room.captain_vote_ready_teams):
         await runtime._finalize_captain_vote(room)
         return
 
-    runtime._schedule_timer(room, "captainVote", CAPTAIN_VOTE_TIME_MS, runtime._finalize_captain_vote)
+    logger.warning(
+        "captain_vote started room=%s timeout_ms=%s team_sizes=%s single_member_fast_path=%s",
+        room.room_id,
+        captain_vote_timeout_ms,
+        team_sizes,
+        single_member_fast_path,
+    )
+    runtime._schedule_timer(room, "captainVote", captain_vote_timeout_ms, runtime._finalize_captain_vote)
     await runtime._broadcast_and_persist(room)
 
 
@@ -200,6 +237,35 @@ async def after_team_reveal(runtime: "QuizRuntime", room: "RoomRuntime") -> None
 
 
 async def start_game(runtime: "QuizRuntime", room: "RoomRuntime") -> None:
+    participant_count = len(runtime._active_non_host_players(room))
+    if participant_count == 0:
+        runtime._append_system_chat_message(room, "Нельзя начать игру: в комнате нет участников.", kind="system")
+        await runtime._broadcast_and_persist(room)
+        return
+
+    if room.game_mode in {"classic", "chaos"} and participant_count < 2:
+        runtime._append_system_chat_message(
+            room,
+            "Нельзя начать игру: для режима Что? Где? Когда? и Командный хаос нужно минимум 2 участника.",
+            kind="system",
+        )
+        await runtime._broadcast_and_persist(room)
+        return
+
+    if room.question_source == "generated":
+        try:
+            await runtime._populate_generated_room_questions(room)
+        except Exception:
+            runtime._append_system_chat_message(
+                room,
+                "Не удалось сгенерировать вопросы по этой теме. Выберите тему из готового списка или попробуйте позже.",
+                kind="system",
+            )
+            await runtime._broadcast_and_persist(room)
+            return
+    else:
+        room.questions = create_mock_questions(room.topic, room.question_count, room.difficulty_mode)
+
     runtime._clear_timers(room)
     runtime._reset_captain_state(room)
 
@@ -256,7 +322,9 @@ async def reset_game(
     system_message: str | None = None,
 ) -> None:
     runtime._clear_timers(room)
-    room.questions = create_mock_questions(room.topic, room.question_count, room.difficulty_mode)
+    runtime._cleanup_generated_questions_file(room)
+    if room.question_source == "catalog":
+        room.questions = create_mock_questions(room.topic, room.question_count, room.difficulty_mode)
     room.phase = "lobby"
     room.current_question_index = -1
     room.active_team = "A"
@@ -283,6 +351,7 @@ async def reset_game(
     room.question_history = []
     room.event_history = []
     room.chat_moderation_strikes = {}
+    room.results_recorded = False
 
     runtime._reset_captain_state(room)
     room.team_names = {"A": "Команда A", "B": "Команда B"}

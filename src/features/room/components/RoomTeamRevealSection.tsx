@@ -87,6 +87,7 @@ export function RoomTeamRevealSection({
                         className="h-7 w-7 shrink-0"
                         radiusClass="rounded-full"
                         innerClassName="p-0"
+                        tuningVariant="room"
                       >
                         <span
                           className="inline-flex h-full w-full items-center justify-center rounded-full text-xs font-semibold text-white"
@@ -114,6 +115,7 @@ export function RoomTeamRevealSection({
                         className="h-7 w-7 shrink-0"
                         radiusClass="rounded-full"
                         innerClassName="p-0"
+                        tuningVariant="room"
                       >
                         <span
                           className="inline-flex h-full w-full items-center justify-center rounded-full text-xs font-semibold text-white"

@@ -10,6 +10,7 @@ Team = Literal["A", "B"]
 QuestionDifficulty = Literal["easy", "medium", "hard"]
 DifficultyMode = Literal["easy", "medium", "hard", "mixed", "progressive"]
 GameMode = Literal["classic", "ffa", "chaos"]
+QuestionSource = Literal["catalog", "generated"]
 SkipRequestStatus = Literal["idle", "pending", "rejected"]
 Phase = Literal[
     "lobby",
@@ -57,6 +58,9 @@ class RoomRuntime:
     host_peer_id: str = ""
     host_token_hash: str = ""
     room_password_hash: str = ""
+    is_password_protected: bool = False
+    question_source: QuestionSource = "catalog"
+    generated_questions_path: str | None = None
     password: str | None = None
     phase: Phase = "lobby"
     current_question_index: int = -1
@@ -97,6 +101,7 @@ class RoomRuntime:
         default_factory=lambda: {"A": "Команда A", "B": "Команда B"}
     )
     used_team_names: set[str] = field(default_factory=set)
+    results_recorded: bool = False
     state_version: int = 1
     timers: dict[str, asyncio.Task[None] | None] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)

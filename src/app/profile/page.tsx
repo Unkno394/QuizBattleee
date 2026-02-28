@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, User } from "lucide-react";
+import { Eye, EyeOff, Info, User } from "lucide-react";
 
 import AnimatedBackground from "../../components/AnimatedBackground";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -76,6 +76,7 @@ export default function ProfilePage() {
   const [shopCatalog, setShopCatalog] = useState<ShopCatalogItem[]>([]);
   const [shopState, setShopState] = useState<ShopState | null>(null);
   const [shopBusyId, setShopBusyId] = useState<string | null>(null);
+  const [isSavingPreferredMascot, setIsSavingPreferredMascot] = useState(false);
 
   const [resetCode, setResetCode] = useState("");
   const [resetNewPassword, setResetNewPassword] = useState("");
@@ -198,6 +199,22 @@ export default function ProfilePage() {
     }
   };
 
+  const handlePreferredMascotChange = async (nextMascot: "cat" | "dog") => {
+    if (!profile || profile.preferred_mascot === nextMascot || isSavingPreferredMascot) return;
+    setIsSavingPreferredMascot(true);
+    try {
+      const response = await updateProfile({ preferred_mascot: nextMascot });
+      setProfile(response.user);
+      notify("Предпочитаемый талисман обновлен", "success");
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Не удалось обновить предпочитаемого талисмана";
+      notify(message, "error");
+    } finally {
+      setIsSavingPreferredMascot(false);
+    }
+  };
+
   const handleSaveEmail = async () => {
     const nextEmail = emailDraft.trim().toLowerCase();
     if (!nextEmail) {
@@ -272,7 +289,7 @@ export default function ProfilePage() {
     try {
       await forgotPassword(profile.email);
       setResetCodeSent(true);
-      notify("Проверьте почту и введите код для сброса пароля", "info");
+      notify("Проверьте почту (включая папку Спам) и введите код для сброса пароля", "info");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Не удалось отправить код";
       notify(message, "error");
@@ -413,25 +430,27 @@ export default function ProfilePage() {
         <main className="container mx-auto max-w-4xl px-4 pb-8 md:px-6">
           <div className="mb-8 flex items-center gap-4">
             <div className="cursor-pointer transition-transform hover:scale-105" onClick={handleAvatarClick}>
-              <Frame
-                frameId={shopState?.equipped?.profileFrame || profile.profile_frame}
-                className="h-20 w-20"
-                radiusClass="rounded-full"
-                innerClassName={`relative flex h-full w-full items-center justify-center rounded-full ${getWaveColorClass(
-                  waveColor
-                )} p-0 text-2xl font-semibold text-white`}
-              >
-                {profile.avatar_url && !isAvatarBroken ? (
-                  <img
-                    src={profile.avatar_url}
-                    alt="Аватар"
-                    className="h-full w-full rounded-full object-cover"
-                    onError={() => setIsAvatarBroken(true)}
-                  />
-                ) : (
-                  <User className="h-10 w-10 text-white/90" />
-                )}
-              </Frame>
+              <div className="relative h-20 w-20">
+                <Frame
+                  frameId={shopState?.equipped?.profileFrame || profile.profile_frame}
+                  className="absolute -inset-[10px] h-[calc(100%+20px)] w-[calc(100%+20px)]"
+                  radiusClass="rounded-full"
+                  innerClassName={`relative flex h-full w-full items-center justify-center rounded-full ${getWaveColorClass(
+                    waveColor
+                  )} p-[2px] text-2xl font-semibold text-white`}
+                >
+                  {profile.avatar_url && !isAvatarBroken ? (
+                    <img
+                      src={profile.avatar_url}
+                      alt="Аватар"
+                      className="h-full w-full rounded-full object-cover"
+                      onError={() => setIsAvatarBroken(true)}
+                    />
+                  ) : (
+                    <User className="h-10 w-10 text-white/90" />
+                  )}
+                </Frame>
+              </div>
             </div>
 
             <div className="flex-1">
@@ -501,6 +520,15 @@ export default function ProfilePage() {
                 onChange={handleAvatarChange}
               />
             </div>
+          </div>
+
+          <div className="mb-6 rounded-2xl border border-cyan-300/35 bg-cyan-500/10 p-5 backdrop-blur-md">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200/80">
+              Всего побед
+            </p>
+            <p className="mt-2 text-3xl font-bold text-white">
+              {Math.max(0, Number(profile.wins_total ?? 0))}
+            </p>
           </div>
 
           <SettingsSection title="Личная информация">
@@ -682,6 +710,48 @@ export default function ProfilePage() {
           </SettingsSection>
 
           <SettingsSection title="Внешний вид">
+            <SettingItem label="Предпочитаемый талисман">
+              <div className="flex flex-col items-start gap-3">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handlePreferredMascotChange("dog");
+                    }}
+                    disabled={isSavingPreferredMascot}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
+                      profile.preferred_mascot === "dog"
+                        ? "border-cyan-300/70 bg-cyan-500/25 text-cyan-100"
+                        : "border-white/25 bg-white/10 text-white/85 hover:bg-white/20"
+                    } disabled:cursor-not-allowed disabled:opacity-60`}
+                  >
+                    Пёс Байт
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handlePreferredMascotChange("cat");
+                    }}
+                    disabled={isSavingPreferredMascot}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
+                      profile.preferred_mascot === "cat"
+                        ? "border-cyan-300/70 bg-cyan-500/25 text-cyan-100"
+                        : "border-white/25 bg-white/10 text-white/85 hover:bg-white/20"
+                    } disabled:cursor-not-allowed disabled:opacity-60`}
+                  >
+                    Кошка Луна
+                  </button>
+                </div>
+                <div className="group relative inline-flex items-center gap-2 text-xs text-white/65">
+                  <Info className="h-4 w-4 text-cyan-200/80" />
+                  <span>Когда применяется выбор</span>
+                  <div className="pointer-events-none absolute left-0 top-full z-20 mt-2 w-72 rounded-lg border border-cyan-300/30 bg-slate-950/95 p-3 text-xs text-white/85 opacity-0 shadow-xl transition group-hover:opacity-100">
+                    Этот талисман используется, если вы ведущий или играете в режиме «Все против
+                    всех». В командных режимах у игроков талисман определяется по команде.
+                  </div>
+                </div>
+              </div>
+            </SettingItem>
             <SettingItem label="Цвет волны">
               <div className="flex flex-col items-start gap-3">
                 <span className="text-sm text-white/70">Выберите цвет анимированной волны</span>

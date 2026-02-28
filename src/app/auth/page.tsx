@@ -118,9 +118,9 @@ export default function LoginForm() {
     try {
       await forgotPassword(email);
       setResetEmail(email);
-      setResetMessage('Письмо с кодом отправлено. Проверьте почту.');
+      setResetMessage('Письмо с кодом отправлено. Проверьте почту, включая папку Спам.');
       setResetStep('verify');
-      notify('Письмо с кодом отправлено. Проверьте почту.', 'success');
+      notify('Письмо с кодом отправлено. Проверьте почту, включая папку Спам.', 'success');
     } catch (error: unknown) {
       console.error('[auth] forgot error', error);
       const msg = getErrorMessage(error, 'Не удалось отправить письмо');
@@ -243,7 +243,7 @@ export default function LoginForm() {
       setConfirmEmail(email);
       setShowConfirmModal(true);
       setIsActive(false);
-      notify('Код отправлен на почту. Подтвердите email.', 'info');
+      notify('Код отправлен на почту. Подтвердите email. Если письма нет, проверьте Спам.', 'info');
     } catch (error: unknown) {
       console.error('[auth] register error', error);
       const msg = getErrorMessage(error, 'Ошибка при регистрации');
@@ -536,7 +536,7 @@ export default function LoginForm() {
             </form>
 
             <p className="mt-4 text-center text-xs text-white/60">
-              Сброс пароля завершится после подтверждения кода и ввода нового пароля.
+              Сброс пароля завершится после подтверждения кода и ввода нового пароля. Письмо может попасть в Спам.
             </p>
           </div>
         </div>

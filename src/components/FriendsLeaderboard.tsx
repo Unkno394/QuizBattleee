@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Heart, Trophy } from "lucide-react";
+import { fetchApi, toBearerToken } from "@/shared/api/base";
 
 interface FriendsLeaderboardProps {
   token: string | null;
@@ -32,8 +33,8 @@ export default function FriendsLeaderboard({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/leaderboard/friends?limit=50", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchApi("/api/leaderboard/friends?limit=50", {
+        headers: { Authorization: toBearerToken(token) },
       });
       if (res.ok) {
         const data = await res.json();

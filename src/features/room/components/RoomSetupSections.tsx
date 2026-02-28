@@ -15,6 +15,7 @@ type CaptainVoteSectionProps = {
   truncateName: (name: string, maxLength?: number) => string;
   formatSeconds: (seconds: number) => string;
   votesLabel: (votes: number) => string;
+  teamLabel: (team: Team) => string;
   captainSectorLabel: (team: Team) => string;
   captainSectorTextClass: (team: Team) => string;
 };
@@ -31,6 +32,7 @@ export function CaptainVoteSection({
   truncateName,
   formatSeconds,
   votesLabel,
+  teamLabel,
   captainSectorLabel,
   captainSectorTextClass,
 }: CaptainVoteSectionProps) {

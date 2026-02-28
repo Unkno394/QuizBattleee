@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from .config import settings
@@ -16,6 +18,7 @@ TEAM_NAMING_TIME_MS = 30_000
 HOST_RECONNECT_WAIT_MS = 30_000
 BASE_CORRECT_POINTS = 1
 CHAT_BAN_STRIKES_TO_DISQUALIFY = 3
+PLAYER_PRESENCE_DISCONNECT_GRACE_MS = 3500
 TEAM_KEYS: tuple[Team, Team] = ("A", "B")
 ROOM_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 FORBIDDEN_NAME_PARTS = ("админ", "admin", "moder", "host")
@@ -32,232 +35,74 @@ DIFFICULTY_MODES: tuple[
     DifficultyMode,
 ] = ("easy", "medium", "hard", "mixed", "progressive")
 GAME_MODES: tuple[GameMode, GameMode, GameMode] = ("classic", "ffa", "chaos")
-SUPPORTED_TOPICS: tuple[str, str, str, str, str] = (
-    "Искусственный интеллект",
-    "Киберпанк в кино",
-    "История технологий",
-    "Кибербезопасность",
-    "Общая эрудиция",
-)
+QUESTIONS_CATALOG_PATH = Path(__file__).resolve().parents[2] / "public" / "questions_by_difficulty.json"
 
-QUESTION_BANK: dict[QuestionDifficulty, list[dict[str, Any]]] = {
-    "easy": [
-        {
-            "text": 'Какой формат лучше всего подходит для первого знакомства с темой "{topic}"?',
-            "options": [
-                "Короткий обзор основных понятий",
-                "Случайный спор без аргументов",
-                "Полный отказ от структуры",
-                "Только редкие термины",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что чаще всего помогает быстро понять вопрос по теме "{topic}"?',
-            "options": [
-                "Внимательно прочитать формулировку",
-                "Сразу нажать первый вариант",
-                "Игнорировать ключевые слова",
-                "Ждать случайной подсказки",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Как команде проще избежать лишних ошибок в вопросах на тему "{topic}"?',
-            "options": [
-                "Проверять очевидные варианты",
-                "Отвечать наугад",
-                "Пропускать обсуждение",
-                "Менять капитана каждый ход",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой источник обычно самый понятный для базовых фактов по теме "{topic}"?',
-            "options": [
-                "Учебный обзор или вводная статья",
-                "Слухи в комментариях",
-                "Непроверенный мем",
-                "Случайный пост без автора",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что логично сделать перед финальным ответом на простой вопрос по "{topic}"?',
-            "options": [
-                "Сверить выбор с формулировкой вопроса",
-                "Убрать самый длинный вариант автоматически",
-                "Попросить соперника подсказать",
-                "Пропустить таймер",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой признак чаще указывает на легкий вопрос в теме "{topic}"?',
-            "options": [
-                "Прямая формулировка без скрытых условий",
-                "Многоступенчатая логическая цепочка",
-                "Два верных ответа одновременно",
-                "Неопределенные единицы измерения",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой командный подход обычно работает на простых вопросах по "{topic}"?',
-            "options": [
-                "Короткое обсуждение и быстрый выбор",
-                "Долгий спор без решения",
-                "Полный отказ от проверки",
-                "Случайное голосование",
-            ],
-            "correctIndex": 0,
-        },
-    ],
-    "medium": [
-        {
-            "text": 'В вопросах средней сложности по теме "{topic}" что чаще дает преимущество?',
-            "options": [
-                "Сопоставление двух похожих фактов",
-                "Выбор самого короткого ответа",
-                "Пропуск контекста вопроса",
-                "Случайный тайм-менеджмент",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Как лучше проверить гипотезу в вопросе на тему "{topic}"?',
-            "options": [
-                "Отбросить варианты, противоречащие условию",
-                "Принять первый ответ капитана без обсуждения",
-                "Оставить только самый эмоциональный вариант",
-                "Сравнить шрифты вариантов",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой шаг помогает в среднем уровне вопросов по "{topic}"?',
-            "options": [
-                "Выделить ключевое ограничение в вопросе",
-                "Игнорировать числовые данные",
-                "Сменить тему в середине обсуждения",
-                "Выбирать вариант по длине текста",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что чаще всего отличает средний вопрос по теме "{topic}" от легкого?',
-            "options": [
-                "Нужна проверка контекста и связи фактов",
-                "Всегда есть очевидная подсказка",
-                "Правильный ответ всегда второй",
-                "Достаточно угадать настроение автора",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какая стратегия лучше в вопросах средней сложности по "{topic}"?',
-            "options": [
-                "Сначала сузить круг до 2 вариантов, затем сравнить",
-                "Сразу выбрать неизвестный термин",
-                "Исключить все знакомые варианты",
-                "Сохранить ответ до конца таймера без проверки",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Как команде не потерять баллы на вопросах среднего уровня по "{topic}"?',
-            "options": [
-                "Делить обсуждение: фактолог и логик",
-                "Решать молча и по отдельности",
-                "Не учитывать формулировку",
-                "Опаздывать с подтверждением ответа",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что обычно работает при споре между двумя версиями ответа по "{topic}"?',
-            "options": [
-                "Проверить, какая версия лучше совпадает с условием",
-                "Выбрать вариант капитана без аргументов",
-                "Проголосовать случайно",
-                "Поменять ответ в последнюю секунду",
-            ],
-            "correctIndex": 0,
-        },
-    ],
-    "hard": [
-        {
-            "text": 'В сложном вопросе по теме "{topic}" ключ к верному ответу чаще всего в чем?',
-            "options": [
-                "В точном учете скрытого ограничения",
-                "В выборе самого знакомого слова",
-                "В случайном интуитивном решении",
-                "В длине варианта ответа",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой подход надежнее на сложных вопросах по "{topic}"?',
-            "options": [
-                "Построить короткую проверяемую цепочку рассуждения",
-                "Сразу убрать все длинные варианты",
-                "Игнорировать контрпримеры",
-                "Сделать выбор по скорости чтения",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что особенно важно в многошаговом вопросе по "{topic}"?',
-            "options": [
-                "Проверять каждый промежуточный вывод",
-                "Опираться только на первое впечатление",
-                "Не учитывать формальные условия",
-                "Исключить обсуждение в команде",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Как снизить риск ошибки в сложном сравнительном вопросе на тему "{topic}"?',
-            "options": [
-                "Сопоставить варианты по одинаковому критерию",
-                "Смешать разные критерии и выбрать быстрее",
-                "Оставить только самый необычный вариант",
-                "Поменять критерий в конце",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что помогает на "блиц"-уровне сложных вопросов по "{topic}"?',
-            "options": [
-                "Короткий чек-лист: условие, исключение, выбор",
-                "Длинный спор до последней секунды",
-                "Отказ от проверки варианта",
-                "Выбор по количеству букв",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Какой навык решает исход сложного вопроса по "{topic}" чаще всего?',
-            "options": [
-                "Отделять факт от предположения под давлением времени",
-                "Запоминать расположение кнопок",
-                "Игнорировать уточняющие слова",
-                "Подменять условие похожим",
-            ],
-            "correctIndex": 0,
-        },
-        {
-            "text": 'Что правильнее сделать, если в сложном вопросе по "{topic}" два похожих ответа?',
-            "options": [
-                "Найти различие, которое прямо следует из условия",
-                "Выбрать тот, что кажется красивее",
-                "Угадать по порядковому номеру",
-                "Оставить решение до нуля на таймере",
-            ],
-            "correctIndex": 0,
-        },
-    ],
-}
+
+def _sanitize_question_entry(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    text = str(raw.get("text") or "").strip()
+    options_raw = raw.get("options")
+    if not text or not isinstance(options_raw, list):
+        return None
+
+    options = [str(option).strip() for option in options_raw if str(option).strip()]
+    if len(options) < 2:
+        return None
+
+    try:
+        correct_index = int(raw.get("correctIndex", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+
+    if correct_index < 0 or correct_index >= len(options):
+        return None
+
+    return {
+        "text": text[:300],
+        "options": options[:6],
+        "correctIndex": correct_index,
+    }
+
+
+def _load_question_catalog() -> dict[str, dict[QuestionDifficulty, list[dict[str, Any]]]]:
+    payload = json.loads(QUESTIONS_CATALOG_PATH.read_text(encoding="utf-8"))
+    topics_raw = payload.get("topics")
+    if not isinstance(topics_raw, dict):
+        raise RuntimeError("questions_by_difficulty.json must contain a 'topics' object")
+
+    catalog: dict[str, dict[QuestionDifficulty, list[dict[str, Any]]]] = {}
+    for topic_name_raw, topic_payload in topics_raw.items():
+        if not isinstance(topic_name_raw, str) or not isinstance(topic_payload, dict):
+            continue
+
+        topic_name = topic_name_raw.strip()[:80]
+        if not topic_name:
+            continue
+
+        difficulty_map: dict[QuestionDifficulty, list[dict[str, Any]]] = {}
+        for difficulty in DIFFICULTY_LEVELS:
+            entries_raw = topic_payload.get(difficulty)
+            if not isinstance(entries_raw, list):
+                difficulty_map[difficulty] = []
+                continue
+
+            entries = [entry for entry in (_sanitize_question_entry(item) for item in entries_raw) if entry]
+            difficulty_map[difficulty] = entries
+
+        if all(difficulty_map[difficulty] for difficulty in DIFFICULTY_LEVELS):
+            catalog[topic_name] = difficulty_map
+
+    if not catalog:
+        raise RuntimeError("No valid questions were loaded from questions_by_difficulty.json")
+
+    return catalog
+
+
+QUESTION_CATALOG: dict[str, dict[QuestionDifficulty, list[dict[str, Any]]]] = _load_question_catalog()
+SUPPORTED_TOPICS: tuple[str, ...] = tuple(QUESTION_CATALOG.keys())
+DEFAULT_TOPIC = "Общая эрудиция" if "Общая эрудиция" in QUESTION_CATALOG else SUPPORTED_TOPICS[0]
 
 DYNAMIC_TEAM_NAMES = [
     "Импульс",
@@ -296,4 +141,3 @@ DYNAMIC_TEAM_NAMES = [
     "Точный расчёт",
     "Момент истины",
 ]
-

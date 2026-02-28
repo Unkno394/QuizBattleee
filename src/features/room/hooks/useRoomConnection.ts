@@ -25,9 +25,17 @@ type UseRoomConnectionParams = {
   pin: string;
   onRequireJoin: () => void;
   notify: NotifyFn;
+  onFriendRequestReceived?: (requesterId: number) => void;
+  onFriendRequestResolved?: (requesterId: number, accepted: boolean) => void;
 };
 
-export function useRoomConnection({ pin, onRequireJoin, notify }: UseRoomConnectionParams) {
+export function useRoomConnection({
+  pin,
+  onRequireJoin,
+  notify,
+  onFriendRequestReceived,
+  onFriendRequestResolved,
+}: UseRoomConnectionParams) {
   const socketRef = useRef<WebSocket | null>(null);
   const connectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -96,6 +104,7 @@ export function useRoomConnection({ pin, onRequireJoin, notify }: UseRoomConnect
         }
 
         const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+        const sameOriginEndpoint = `${protocol}://${window.location.host}/api/ws`;
         const standaloneEndpoint = `${protocol}://${window.location.hostname}:3001/api/ws`;
         const explicitUrl = (process.env.NEXT_PUBLIC_WS_URL || "").trim();
         const safeExplicitEndpoint = shouldUseExplicitEndpoint(
@@ -105,8 +114,8 @@ export function useRoomConnection({ pin, onRequireJoin, notify }: UseRoomConnect
           ? explicitUrl
           : "";
         const endpoints = safeExplicitEndpoint
-          ? uniq([safeExplicitEndpoint, standaloneEndpoint])
-          : [standaloneEndpoint];
+          ? uniq([safeExplicitEndpoint, sameOriginEndpoint, standaloneEndpoint])
+          : uniq([sameOriginEndpoint, standaloneEndpoint]);
 
         const storedNameRaw = window.localStorage.getItem(roomPlayerNameKey(pin));
         const storedName = (storedNameRaw || "").trim();
@@ -122,8 +131,7 @@ export function useRoomConnection({ pin, onRequireJoin, notify }: UseRoomConnect
           Date.now() - joinIntentTs <= ROOM_JOIN_INTENT_TTL_MS;
         const canEnterAsHost = storedRole === "host" && !!storedHostToken;
         const canEnterAsPlayerByToken = storedRole === "player" && !!storedPlayerToken;
-        const canEnterAsPlayerByIntent =
-          storedRole === "player" && !!storedName && hasFreshJoinIntent;
+        const canEnterAsPlayerByIntent = storedRole === "player" && hasFreshJoinIntent;
 
         if (!(canEnterAsHost || canEnterAsPlayerByToken || canEnterAsPlayerByIntent)) {
           window.localStorage.removeItem(roomJoinIntentKey(pin));
@@ -323,6 +331,21 @@ export function useRoomConnection({ pin, onRequireJoin, notify }: UseRoomConnect
               shouldReconnectRef.current = false;
               clearReconnectTimer();
             }
+            return;
+          }
+
+          // new friend events
+          if (message.type === "friend_request_received") {
+            onFriendRequestReceived?.(message.requester_id);
+            return;
+          }
+
+          if (message.type === "friend_request_resolved") {
+            onFriendRequestResolved?.(
+              message.requester_id,
+              message.status === "accepted"
+            );
+            return;
           }
         };
 

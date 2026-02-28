@@ -34,6 +34,7 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
     if room.game_mode == "ffa":
         participants = runtime._active_non_host_players(room)
         question_player_results: list[dict[str, Any]] = []
+        total_points_awarded = 0
         for participant in participants:
             submission = room.answer_submissions.get(participant.peer_id) or {}
             selected_index_raw = submission.get("selectedIndex")
@@ -50,6 +51,7 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
             )
             if selected_index is None:
                 runtime._record_player_skip_stat(room, participant)
+                total_score = int(room.player_scores.get(participant.peer_id, 0) or 0)
                 question_player_results.append(
                     {
                         "peerId": participant.peer_id,
@@ -61,6 +63,7 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
                         "speedBonus": 0,
                         "timeRemainingMs": 0,
                         "pointsAwarded": 0,
+                        "totalScore": total_score,
                         "status": "timeout",
                     }
                 )
@@ -74,6 +77,8 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
                 room.player_scores[participant.peer_id] = (
                     int(room.player_scores.get(participant.peer_id, 0)) + points_awarded
                 )
+            total_points_awarded += points_awarded
+            total_score = int(room.player_scores.get(participant.peer_id, 0) or 0)
             runtime._record_player_answer_stat(
                 room,
                 participant,
@@ -93,6 +98,7 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
                     "speedBonus": speed_bonus,
                     "timeRemainingMs": remaining_ms if is_correct else 0,
                     "pointsAwarded": points_awarded,
+                    "totalScore": total_score,
                     "status": "answered",
                 }
             )
@@ -111,23 +117,32 @@ async def finalize_question(runtime: "QuizRuntime", room: "RoomRuntime") -> None
         )
 
         room.chat = []
+        room.phase = "reveal"
         room.question_ends_at = None
+        room.reveal_ends_at = now_ms() + REVEAL_TIME_MS
         room.active_answer = None
         room.answer_submissions = {}
         room.skip_requesters = set()
         room.skip_request_status = "idle"
         room.skip_request_message_id = None
-        room.last_reveal = None
+        room.last_reveal = {
+            "mode": "ffa",
+            "correctIndex": correct_index,
+            "selectedIndex": None,
+            "answeredBy": None,
+            "answeredByName": "Индивидуальная проверка",
+            "team": None,
+            "isCorrect": False,
+            "basePoints": 0,
+            "speedBonus": 0,
+            "timeRemainingMs": 0,
+            "pointsAwarded": total_points_awarded,
+            "participantsCount": len(participants),
+            "playerResults": question_player_results,
+        }
 
-        if room.current_question_index >= room.question_count - 1:
-            room.phase = "results"
-            runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
-            await runtime._broadcast_and_persist(room)
-            await runtime._persist_game_result(room)
-            return
-
-        room.current_question_index += 1
-        await runtime._start_question_phase(room)
+        runtime._schedule_timer(room, "reveal", REVEAL_TIME_MS, runtime._advance_after_reveal)
+        await runtime._broadcast_and_persist(room)
         return
 
     room.chat = []
@@ -437,8 +452,8 @@ async def skip_question_by_host(
         if room.current_question_index >= room.question_count - 1:
             room.phase = "results"
             runtime._append_result_event(room, "Игра завершена. Переход к финальной статистике.", kind="phase")
+            runtime._schedule_persist_game_result(room)
             await runtime._broadcast_and_persist(room)
-            await runtime._persist_game_result(room)
             return
 
         room.current_question_index += 1

@@ -50,7 +50,7 @@ export default function Modal({ email, onVerified }: ModalProps) {
     setResendLoading(true);
     try {
       await resendVerificationCode(email);
-      setSuccess("Новый код отправлен на почту.");
+      setSuccess("Новый код отправлен на почту. Если письма нет, проверьте папку Спам.");
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Не удалось отправить код повторно"));
     } finally {
@@ -67,7 +67,7 @@ export default function Modal({ email, onVerified }: ModalProps) {
         <h3 className="text-xl font-semibold">Подтверждение почты</h3>
         <p className="mt-3 text-sm text-white/80">
           Мы отправили код подтверждения на <span className="font-semibold text-white">{email}</span>.
-          Введите код ниже.
+          Введите код ниже. Если письмо не пришло, проверьте папку Спам.
         </p>
         <input
           type="text"
@@ -105,7 +105,7 @@ export default function Modal({ email, onVerified }: ModalProps) {
           </button>
         </div>
         <p className="mt-3 text-center text-xs text-white/60">
-          Регистрация завершится после успешного подтверждения кода.
+          Регистрация завершится после успешного подтверждения кода. Письмо может попасть в Спам.
         </p>
       </div>
     </div>

@@ -3,14 +3,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Info, Trophy } from "lucide-react";
+import { Info, Trophy, Zap } from "lucide-react";
 import AnimatedBackground from "@/components/AnimatedBackground";
-import { buyShopItem, equipShopItem, getShop, ShopCatalogItem, ShopState } from "@/shared/api/auth";
+import FriendsBtn from "@/components/FriendsBtn";
+import {
+  buyShopItem,
+  equipShopItem,
+  getProfile,
+  getShop,
+  ShopCatalogItem,
+  ShopState,
+} from "@/shared/api/auth";
+import { fetchApi } from "@/shared/api/base";
 import { useProfileAvatar } from "@/shared/hooks/useProfileAvatar";
 import { ShopModal } from "@/shared/shop/ShopModal";
 import { Frame } from "@/shared/shop/Frame";
 import {
-  API_BASE,
   DIFFICULTY_OPTIONS,
   GAME_MODE_OPTIONS,
   INTRO_SEEN_STORAGE_KEY,
@@ -30,6 +38,8 @@ export default function HomePage() {
   const router = useRouter();
 
   const [topic, setTopic] = useState<string>(TOPIC_OPTIONS[0]);
+  const [customTopic, setCustomTopic] = useState("");
+  const [isAiTopicUnavailable, setIsAiTopicUnavailable] = useState(false);
   const [difficultyMode, setDifficultyMode] = useState<DifficultyMode>("medium");
   const [gameMode, setGameMode] = useState<GameMode>("classic");
   const [openModeHelp, setOpenModeHelp] = useState<GameMode | null>(null);
@@ -49,6 +59,9 @@ export default function HomePage() {
   const [joinPin, setJoinPin] = useState("");
   const [joinName, setJoinName] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
+  const [joinPasswordStatus, setJoinPasswordStatus] = useState<
+    "idle" | "checking" | "valid" | "invalid" | "error"
+  >("idle");
   const [joinRoomHasPassword, setJoinRoomHasPassword] = useState(false);
   const [joinRoomCheckStatus, setJoinRoomCheckStatus] = useState<
     "idle" | "loading" | "ready" | "not-found" | "error"
@@ -56,7 +69,9 @@ export default function HomePage() {
   const [isClientReady, setIsClientReady] = useState(false);
   const [showIntro, setShowIntro] = useState(false);
   const [isRulesExpanded, setIsRulesExpanded] = useState(false);
+  const [openIntroMode, setOpenIntroMode] = useState<GameMode | null>("classic");
   const [isRegistered, setIsRegistered] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [brokenProfileAvatarUrl, setBrokenProfileAvatarUrl] = useState<string | null>(null);
   const [homeError, setHomeError] = useState("");
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
@@ -90,11 +105,13 @@ export default function HomePage() {
       normalizedJoinPin.length < 4 ||
       (!isRegistered && joinName.trim().length < 2) ||
       joinRoomCheckStatus === "loading" ||
+      joinPasswordStatus === "checking" ||
       (shouldShowJoinPasswordInput && !joinPassword.trim()),
     [
       isRegistered,
       joinName,
       joinPassword,
+      joinPasswordStatus,
       joinRoomCheckStatus,
       normalizedJoinPin,
       shouldShowJoinPasswordInput,
@@ -116,7 +133,9 @@ export default function HomePage() {
     if (typeof window === "undefined") return;
 
     const introSeen = window.localStorage.getItem(INTRO_SEEN_STORAGE_KEY) === "1";
-    const registered = Boolean(window.localStorage.getItem("access_token"));
+    const rawToken = (window.localStorage.getItem("access_token") || "").trim();
+    const registered = Boolean(rawToken);
+    setAuthToken(rawToken && rawToken !== "undefined" && rawToken !== "null" ? rawToken : null);
     const pendingJoinPin = (window.localStorage.getItem(JOIN_PREFILL_PIN_STORAGE_KEY) || "")
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, "")
@@ -141,6 +160,7 @@ export default function HomePage() {
       setJoinRoomHasPassword(false);
       setJoinRoomCheckStatus("idle");
       setJoinPassword("");
+      setJoinPasswordStatus("idle");
       return;
     }
 
@@ -150,7 +170,7 @@ export default function HomePage() {
       void (async () => {
         setJoinRoomCheckStatus("loading");
         try {
-          const response = await fetch(`${API_BASE}/api/rooms/${normalizedJoinPin}`, {
+          const response = await fetchApi(`/api/rooms/${normalizedJoinPin}`, {
             signal: controller.signal,
           });
           if (cancelled) return;
@@ -158,6 +178,7 @@ export default function HomePage() {
             setJoinRoomHasPassword(false);
             setJoinRoomCheckStatus("not-found");
             setJoinPassword("");
+            setJoinPasswordStatus("idle");
             return;
           }
           if (!response.ok) {
@@ -169,11 +190,13 @@ export default function HomePage() {
           setJoinRoomCheckStatus("ready");
           if (!hasPassword) {
             setJoinPassword("");
+            setJoinPasswordStatus("idle");
           }
         } catch {
           if (cancelled || controller.signal.aborted) return;
           setJoinRoomHasPassword(false);
           setJoinRoomCheckStatus("error");
+          setJoinPasswordStatus("idle");
         }
       })();
     }, 250);
@@ -184,6 +207,10 @@ export default function HomePage() {
       window.clearTimeout(timer);
     };
   }, [normalizedJoinPin]);
+
+  useEffect(() => {
+    setJoinPasswordStatus("idle");
+  }, [joinPassword, normalizedJoinPin]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -275,8 +302,34 @@ export default function HomePage() {
     };
   }, []);
 
+  const resolveRegisteredHostName = async (): Promise<string> => {
+    const inMemoryName = normalizedProfileName.trim();
+    if (inMemoryName) {
+      return inMemoryName.slice(0, 24);
+    }
+
+    const rawToken =
+      (authToken || "").trim() ||
+      (typeof window !== "undefined" ? (window.localStorage.getItem("access_token") || "").trim() : "");
+    if (rawToken && rawToken !== "undefined" && rawToken !== "null") {
+      try {
+        const profile = await getProfile(rawToken);
+        const dbName = String(profile?.user?.display_name || "").trim();
+        if (dbName) {
+          return dbName.slice(0, 24);
+        }
+      } catch {
+        // Ignore and fallback below.
+      }
+    }
+
+    return "Игрок";
+  };
+
   const handleCreate = async () => {
-    const resolvedHostName = isRegistered ? normalizedProfileName || "Ведущий" : hostName.trim() || "Ведущий";
+    const resolvedHostName = isRegistered
+      ? await resolveRegisteredHostName()
+      : hostName.trim() || "Ведущий";
     const normalizedRoomPassword = roomPassword.trim();
     if (roomType === "password" && normalizedRoomPassword.length < 3) {
       setHomeError("Пароль комнаты должен содержать минимум 3 символа");
@@ -285,13 +338,14 @@ export default function HomePage() {
     setHomeError("");
     setIsCreatingRoom(true);
     try {
-      const response = await fetch(`${API_BASE}/api/rooms/create`, {
+      const requestedTopic = customTopic.trim() || topic.trim() || TOPIC_OPTIONS[0];
+      const response = await fetchApi("/api/rooms/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          topic: topic.trim() || TOPIC_OPTIONS[0],
+          topic: requestedTopic,
           difficulty: difficultyMode,
           gameMode,
           questionCount: Math.max(5, Math.min(7, questionCount)),
@@ -300,8 +354,25 @@ export default function HomePage() {
         }),
       });
       if (!response.ok) {
-        throw new Error(`Не удалось создать комнату (${response.status})`);
+        let message = `Не удалось создать комнату (${response.status})`;
+        try {
+          const payload = (await response.json()) as { detail?: string };
+          if (payload?.detail) {
+            message = payload.detail;
+          }
+        } catch {
+          // Ignore json parsing error and keep fallback message.
+        }
+        const aiUnavailable =
+          response.status === 503 ||
+          /нейросеть|не ответила|готового списка/i.test(message);
+        if (aiUnavailable) {
+          setIsAiTopicUnavailable(true);
+          setCustomTopic("");
+        }
+        throw new Error(message);
       }
+      setIsAiTopicUnavailable(false);
 
       const data = (await response.json()) as { roomId?: string; hostToken?: string };
       const roomId = (data.roomId || "").toUpperCase();
@@ -326,9 +397,43 @@ export default function HomePage() {
     }
   };
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     const pin = normalizedJoinPin;
     if (!pin) return;
+
+    if (joinRoomHasPassword) {
+      const candidatePassword = joinPassword.trim();
+      if (!candidatePassword) {
+        setJoinPasswordStatus("invalid");
+        return;
+      }
+      setJoinPasswordStatus("checking");
+      try {
+        const verifyResponse = await fetchApi(`/api/rooms/${pin}/verify-password`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ password: candidatePassword }),
+        });
+        if (!verifyResponse.ok) {
+          setJoinPasswordStatus("error");
+          return;
+        }
+        const verifyPayload = (await verifyResponse.json()) as {
+          valid?: boolean;
+          hasPassword?: boolean;
+        };
+        if (!verifyPayload?.valid) {
+          setJoinPasswordStatus("invalid");
+          return;
+        }
+        setJoinPasswordStatus("valid");
+      } catch {
+        setJoinPasswordStatus("error");
+        return;
+      }
+    }
 
     const resolvedJoinName = isRegistered ? normalizedProfileName || "Игрок" : joinName.trim() || "Игрок";
     if (typeof window !== "undefined") {
@@ -381,11 +486,69 @@ export default function HomePage() {
           <section className="w-full rounded-3xl border border-white/20 bg-black/45 p-6 backdrop-blur-md sm:p-8">
             <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">QuizBattle</h1>
             <p className="mt-3 text-base text-white/80 sm:text-lg">
-              Платформа для динамичных командных квиз-баталий в реальном времени.
-              Ведущий запускает игру, участники делятся на два сектора и соревнуются за победу по знаниям и скорости.
+              Здесь ведущий создает комнату, а участники подключаются по PIN и играют в реальном времени.
+              Можно играть командами или каждый сам за себя.
             </p>
 
-            <div className="mt-6 rounded-2xl border border-white/20 bg-white/5">
+            <div className="mt-6 rounded-2xl border border-cyan-300/30 bg-cyan-500/10 p-4 sm:p-5">
+              <p className="text-sm font-semibold text-cyan-100 sm:text-base">Роли в игре</p>
+              <ul className="mt-3 space-y-2 text-sm text-cyan-50/90 sm:text-base">
+                <li>
+                  <span className="font-semibold">Ведущий:</span> настраивает комнату, запускает этапы и управляет
+                  ходом игры.
+                </li>
+                <li>
+                  <span className="font-semibold">Участники:</span> отвечают на вопросы, соревнуются за баллы и
+                  помогают команде победить.
+                </li>
+              </ul>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-4 sm:p-5">
+              <p className="text-sm font-semibold text-emerald-100 sm:text-base">Что дает регистрация</p>
+              <p className="mt-2 text-sm text-emerald-50/90 sm:text-base">
+                После регистрации открываются друзья, магазин, приглашения в комнаты, профиль, рейтинг среди друзей и
+                синхронизация прогресса аккаунта.
+              </p>
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-2xl border border-white/20 bg-white/5">
+              <p className="border-b border-white/10 px-4 py-3 text-sm font-semibold text-white/90 sm:px-5 sm:text-base">
+                Режимы игры
+              </p>
+              <div className="divide-y divide-white/10">
+                {GAME_MODE_OPTIONS.map((mode) => {
+                  const isOpen = openIntroMode === mode.value;
+                  return (
+                    <div key={mode.value}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenIntroMode((prev) => (prev === mode.value ? null : mode.value))}
+                        className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-white/90 transition hover:bg-white/5 sm:px-5 sm:py-4 sm:text-base"
+                      >
+                        <span className="font-semibold">{mode.label}</span>
+                        <svg
+                          className={`h-5 w-5 text-white/70 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {isOpen ? (
+                        <div className="bg-black/20 px-4 pb-4 pt-1 text-sm text-white/80 sm:px-5 sm:text-base">
+                          <p>{mode.hint}</p>
+                          <p className="mt-2 text-white/70">{mode.rules}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-white/20 bg-white/5">
               <button
                 type="button"
                 onClick={() => setIsRulesExpanded((prev) => !prev)}
@@ -435,92 +598,86 @@ export default function HomePage() {
         </div>
       ) : (
         <>
-          {isRegistered ? (
-            <div className="absolute right-4 top-4 z-20 inline-flex items-center gap-2 sm:right-6 sm:top-6 lg:right-8 lg:top-8">
-              <Link
-                href="/rating"
-                className="inline-flex items-center gap-2 rounded-xl border border-fuchsia-300/40 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/30"
-              >
-                <Trophy className="h-4 w-4" />
-                <span>Рейтинг</span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => setIsShopOpen(true)}
-                className="rounded-xl border border-emerald-300/40 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
-              >
-                Магазин
-              </button>
-              <div className="inline-flex items-center gap-1 rounded-xl border border-amber-300/40 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100">
-                <span>⭐</span>
-                <span>{displayCoins}</span>
-              </div>
-              <Link
-                href="/profile"
-                className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-black/35 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
-              >
-              <Frame
-                frameId={equippedProfileFrame}
-                className="h-7 w-7 shrink-0"
-                radiusClass="rounded-full"
-                innerClassName="relative flex h-full w-full items-center justify-center rounded-full bg-white/20 p-0"
-              >
-                {profileAvatarUrl && profileAvatarUrl !== brokenProfileAvatarUrl ? (
-                  <img
-                    src={profileAvatarUrl}
-                    alt="Аватар профиля"
-                    className="h-full w-full rounded-full object-cover"
-                    onError={() => setBrokenProfileAvatarUrl(profileAvatarUrl)}
-                  />
-                ) : (
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M20 21a8 8 0 10-16 0M12 11a4 4 0 100-8 4 4 0 000 8z"
-                    />
-                  </svg>
-                )}
-              </Frame>
-              <span>{normalizedProfileName || "Профиль"}</span>
-              </Link>
-            </div>
-          ) : (
-            <div className="absolute right-4 top-4 z-20 inline-flex items-center gap-2 sm:right-6 sm:top-6 lg:right-8 lg:top-8">
-              <Link
-                href="/rating"
-                className="inline-flex items-center gap-2 rounded-xl border border-fuchsia-300/40 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/30"
-              >
-                <Trophy className="h-4 w-4" />
-                <span>Рейтинг</span>
-              </Link>
-              <Link
-                href="/auth"
-                onClick={handleAuthLinkClick}
-                className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
-              >
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-cyan-300/25">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M16 11V7a4 4 0 10-8 0v4m-2 0h12a2 2 0 012 2v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5a2 2 0 012-2z"
-                    />
-                  </svg>
-                </span>
-                <span>Зарегистрироваться / Войти</span>
-              </Link>
-            </div>
-          )}
-
           <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center px-4 py-8 sm:px-6 lg:px-8">
             <div className="mb-8 text-center">
               <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">QuizBattle</h1>
               <p className="mt-2 text-sm text-white/70 sm:text-base">
-                Два экрана: Главная и Комната. Серверный таймер, команды A/B, live-синхронизация.
+                Играй в квиз онлайн: создавай комнаты, зови друзей и отвечай в реальном времени.
               </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2 min-[1301px]:fixed min-[1301px]:right-8 min-[1301px]:top-8 min-[1301px]:z-20 min-[1301px]:mt-0">
+                <Link
+                  href="/rating"
+                  className="inline-flex items-center gap-2 rounded-xl border border-fuchsia-300/40 bg-fuchsia-500/20 px-3 py-2 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/30"
+                >
+                  <Trophy className="h-4 w-4" />
+                  <span>Рейтинг</span>
+                </Link>
+                <FriendsBtn token={authToken} />
+                {isRegistered ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsShopOpen(true)}
+                      className="rounded-xl border border-emerald-300/40 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
+                    >
+                      Магазин
+                    </button>
+                    <div className="inline-flex items-center gap-1 rounded-xl border border-amber-300/40 bg-amber-500/20 px-3 py-2 text-sm font-semibold text-amber-100">
+                      <span>⭐</span>
+                      <span>{displayCoins}</span>
+                    </div>
+                    <Link
+                      href="/profile"
+                      className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-black/35 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
+                    >
+                    <Frame
+                      frameId={equippedProfileFrame}
+                      className="h-7 w-7 shrink-0"
+                      radiusClass="rounded-full"
+                      innerClassName="relative flex h-full w-full items-center justify-center rounded-full bg-white/20 p-0"
+                      tuningVariant="room"
+                    >
+                      {profileAvatarUrl && profileAvatarUrl !== brokenProfileAvatarUrl ? (
+                        <img
+                          src={profileAvatarUrl}
+                          alt="Аватар профиля"
+                          className="h-full w-full rounded-full object-cover"
+                          onError={() => setBrokenProfileAvatarUrl(profileAvatarUrl)}
+                        />
+                      ) : (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M20 21a8 8 0 10-16 0M12 11a4 4 0 100-8 4 4 0 000 8z"
+                          />
+                        </svg>
+                      )}
+                    </Frame>
+                    <span>{normalizedProfileName || "Профиль"}</span>
+                    </Link>
+                  </>
+                ) : (
+                  <Link
+                    href="/auth"
+                    onClick={handleAuthLinkClick}
+                    className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30"
+                  >
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-cyan-300/25">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M16 11V7a4 4 0 10-8 0v4m-2 0h12a2 2 0 012 2v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5a2 2 0 012-2z"
+                        />
+                      </svg>
+                    </span>
+                    <span>Зарегистрироваться / Войти</span>
+                  </Link>
+                )}
+              </div>
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
@@ -529,13 +686,22 @@ export default function HomePage() {
                 <div className="mt-4 space-y-3">
                   <div className="block">
                     <span className="mb-1 block text-sm text-white/80">Тема</span>
-                    <p className="mb-2 rounded-xl border border-amber-300/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                      Упс:( наша нейросеть сейчас недоступна. Выберите тему из готового списка.
-                    </p>
                     <p className="mb-2 text-xs text-white/65">
-                      Подходит для школьных/студенческих команд (10-16 участников), ведущих,
-                      модераторов и организаторов мероприятий.
+                      Можно выбрать готовую тему или ввести свою. Для своей темы вопросы сгенерирует
+                      нейросеть, а если она не ответит, останутся готовые темы из списка.
                     </p>
+                    {isAiTopicUnavailable ? (
+                      <p className="mb-3 rounded-xl border border-amber-300/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                        Упс:( наша нейросеть сейчас недоступна. Выберите тему из готового списка.
+                      </p>
+                    ) : (
+                      <input
+                        value={customTopic}
+                        onChange={(event) => setCustomTopic(event.target.value.slice(0, 80))}
+                        placeholder="Своя тема, например: Криптовалюты"
+                        className="mb-3 w-full rounded-xl border border-fuchsia-300/30 bg-fuchsia-500/10 px-3 py-2 text-sm text-white outline-none transition placeholder:text-white/40 focus:border-fuchsia-200/60 focus:ring-2 focus:ring-fuchsia-300/30"
+                      />
+                    )}
                     <div className="relative" ref={topicDropdownRef}>
                       <button
                         type="button"
@@ -992,18 +1158,42 @@ export default function HomePage() {
                       <span className="mb-1 block text-sm text-white/80">Пароль комнаты</span>
                       <input
                         value={joinPassword}
-                        onChange={(event) => setJoinPassword(event.target.value)}
+                        onChange={(event) => {
+                          setJoinPassword(event.target.value);
+                          if (joinPasswordStatus !== "idle") {
+                            setJoinPasswordStatus("idle");
+                          }
+                        }}
                         placeholder="Введите пароль"
                         className="w-full rounded-xl border border-amber-300/35 bg-white/10 px-3 py-2 outline-none transition focus:border-amber-200/70"
                       />
+                      {joinPasswordStatus === "checking" ? (
+                        <p className="mt-1 text-xs text-amber-200">Проверяем пароль...</p>
+                      ) : null}
+                      {joinPasswordStatus === "valid" ? (
+                        <p className="mt-1 text-xs text-emerald-300">Правильный пароль</p>
+                      ) : null}
+                      {joinPasswordStatus === "invalid" ? (
+                        <p className="mt-1 text-xs text-rose-300">Неправильный пароль</p>
+                      ) : null}
+                      {joinPasswordStatus === "error" ? (
+                        <p className="mt-1 text-xs text-rose-300">Не удалось проверить пароль</p>
+                      ) : null}
                     </label>
                   ) : null}
                 </div>
 
+                <Link
+                  href="/quick-game"
+                  className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-300/45 bg-amber-500/20 px-4 py-3 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/30"
+                >
+                  <Zap className="h-4 w-4" />
+                  <span>Быстрая игра</span>
+                </Link>
                 <button
                   onClick={handleJoin}
                   disabled={isJoinDisabled}
-                  className="mt-auto w-full rounded-xl bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="mt-3 w-full rounded-xl bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Войти
                 </button>
@@ -1024,6 +1214,7 @@ export default function HomePage() {
           </div>
         </>
       )}
+
     </main>
   );
 }

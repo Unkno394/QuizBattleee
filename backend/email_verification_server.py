@@ -31,7 +31,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
-CODE_TTL_SECONDS = int(os.getenv("CODE_TTL_SECONDS", "300"))
+CODE_TTL_SECONDS = int(os.getenv("CODE_TTL_SECONDS", "1200"))
 CODE_LENGTH = int(os.getenv("CODE_LENGTH", "6"))
 RESEND_COOLDOWN_SECONDS = int(os.getenv("RESEND_COOLDOWN_SECONDS", "30"))
 SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "20"))

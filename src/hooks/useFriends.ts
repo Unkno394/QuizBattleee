@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { fetchApi, toBearerToken } from "@/shared/api/base";
 
 /**
  * Хук для управления друзьями и заявками
@@ -19,8 +20,8 @@ export function useFriends(token: string | null) {
     setError(null);
 
     try {
-      const res = await fetch("/api/friends", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchApi("/api/friends", {
+        headers: { Authorization: toBearerToken(token) },
       });
       if (res.ok) {
         const data = await res.json();
@@ -39,8 +40,8 @@ export function useFriends(token: string | null) {
     if (!token) return;
 
     try {
-      const res = await fetch("/api/friends/requests", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchApi("/api/friends/requests", {
+        headers: { Authorization: toBearerToken(token) },
       });
       if (res.ok) {
         const data = await res.json();
@@ -56,11 +57,11 @@ export function useFriends(token: string | null) {
       if (!token) return;
 
       try {
-        const res = await fetch("/api/friends/request", {
+        const res = await fetchApi("/api/friends/request", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: toBearerToken(token),
           },
           body: JSON.stringify({ friend_id: friendId }),
         });
@@ -81,11 +82,11 @@ export function useFriends(token: string | null) {
       if (!token) return;
 
       try {
-        const res = await fetch("/api/friends/respond", {
+        const res = await fetchApi("/api/friends/respond", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: toBearerToken(token),
           },
           body: JSON.stringify({ requester_id: requesterId, accept }),
         });
@@ -110,9 +111,9 @@ export function useFriends(token: string | null) {
       if (!token) return;
 
       try {
-        const res = await fetch(`/api/friends/${friendId}`, {
+        const res = await fetchApi(`/api/friends/${friendId}`, {
           method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: toBearerToken(token) },
         });
         if (res.ok) {
           await loadFriends();
@@ -170,8 +171,8 @@ export function useRoomInvitations(token: string | null) {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/rooms/invitations", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchApi("/api/rooms/invitations", {
+        headers: { Authorization: toBearerToken(token) },
       });
       if (res.ok) {
         const data = await res.json();
@@ -189,11 +190,11 @@ export function useRoomInvitations(token: string | null) {
       if (!token) return;
 
       try {
-        const res = await fetch("/api/rooms/invitations/respond", {
+        const res = await fetchApi("/api/rooms/invitations/respond", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: toBearerToken(token),
           },
           body: JSON.stringify({ room_id: roomId, accept }),
         });
@@ -215,11 +216,11 @@ export function useRoomInvitations(token: string | null) {
       if (!token) return;
 
       try {
-        const res = await fetch("/api/rooms/invite", {
+        const res = await fetchApi("/api/rooms/invite", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: toBearerToken(token),
           },
           body: JSON.stringify({ friend_id: friendId, room_id: roomId }),
         });
@@ -265,10 +266,10 @@ export function useFriendsLeaderboard(
     setLoading(true);
 
     try {
-      const res = await fetch(
+      const res = await fetchApi(
         `/api/leaderboard/friends?limit=${Math.min(Math.max(limit, 1), 100)}`,
         {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: toBearerToken(token) },
         }
       );
       if (res.ok) {
@@ -368,8 +369,8 @@ export function useNewFriendRequestsCount(
 
     const checkRequests = async () => {
       try {
-        const res = await fetch("/api/friends/requests", {
-          headers: { Authorization: `Bearer ${token}` },
+        const res = await fetchApi("/api/friends/requests", {
+          headers: { Authorization: toBearerToken(token) },
         });
         if (res.ok) {
           const data = await res.json();

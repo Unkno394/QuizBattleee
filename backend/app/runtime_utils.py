@@ -9,11 +9,12 @@ import uuid
 from typing import Any, cast
 
 from .runtime_constants import (
+    DEFAULT_TOPIC,
     DIFFICULTY_LEVELS,
     DIFFICULTY_MODES,
     FORBIDDEN_NAME_PARTS,
     GAME_MODES,
-    QUESTION_BANK,
+    QUESTION_CATALOG,
     QUESTION_TIME_MS,
     ROOM_CODE_CHARS,
     SUPPORTED_TOPICS,
@@ -120,16 +121,28 @@ def normalize_game_mode(value: Any) -> GameMode:
     return "classic"
 
 
-def normalize_topic(value: Any) -> str:
+def is_supported_topic(value: Any) -> bool:
     raw = str(value or "").strip()[:80]
     if not raw:
-        return SUPPORTED_TOPICS[0]
+        return False
+
+    for topic in SUPPORTED_TOPICS:
+        if topic.lower() == raw.lower():
+            return True
+
+    return False
+
+
+def normalize_topic(value: Any, *, allow_custom: bool = False) -> str:
+    raw = str(value or "").strip()[:80]
+    if not raw:
+        return DEFAULT_TOPIC
 
     for topic in SUPPORTED_TOPICS:
         if topic.lower() == raw.lower():
             return topic
 
-    return SUPPORTED_TOPICS[0]
+    return raw if allow_custom else DEFAULT_TOPIC
 
 
 def build_difficulty_plan(count: int, difficulty_mode: DifficultyMode) -> list[QuestionDifficulty]:
@@ -151,31 +164,100 @@ def build_difficulty_plan(count: int, difficulty_mode: DifficultyMode) -> list[Q
     return [cycle[index % len(cycle)] for index in range(count)]
 
 
-def create_mock_questions(topic: str, count: int, difficulty_mode: DifficultyMode) -> list[dict[str, Any]]:
+def _normalize_question_count(value: Any, *, minimum: int, maximum: int, default: int) -> int:
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, round(num)))
+
+
+def _shuffle_question_options(
+    template: dict[str, Any],
+    *,
+    desired_correct_index: int | None = None,
+) -> tuple[list[str], int]:
+    options = [str(option) for option in template.get("options", [])]
+    correct_index = int(template.get("correctIndex", 0) or 0)
+    correct_option = options[correct_index]
+    distractors = [option for index, option in enumerate(options) if index != correct_index]
+    random.shuffle(distractors)
+
+    if desired_correct_index is None or desired_correct_index < 0 or desired_correct_index >= len(options):
+        desired_correct_index = random.randrange(len(options))
+
+    distractor_iter = iter(distractors)
+    shuffled_options: list[str] = []
+    for index in range(len(options)):
+        if index == desired_correct_index:
+            shuffled_options.append(correct_option)
+        else:
+            shuffled_options.append(next(distractor_iter))
+
+    return shuffled_options, desired_correct_index
+
+
+def create_topic_questions(topic: str, count: int, difficulty_mode: DifficultyMode) -> list[dict[str, Any]]:
     normalized_topic = normalize_topic(topic)
-    normalized_count = clamp_question_count(count)
+    normalized_count = _normalize_question_count(count, minimum=1, maximum=50, default=5)
     normalized_mode = normalize_difficulty_mode(difficulty_mode)
     plan = build_difficulty_plan(normalized_count, normalized_mode)
     cursor_by_difficulty: dict[QuestionDifficulty, int] = {"easy": 0, "medium": 0, "hard": 0}
+    order_by_difficulty: dict[QuestionDifficulty, list[int]] = {"easy": [], "medium": [], "hard": []}
+    answer_slot_order_by_count: dict[int, list[int]] = {}
+    answer_slot_cursor_by_count: dict[int, int] = {}
+    topic_catalog = QUESTION_CATALOG.get(normalized_topic) or QUESTION_CATALOG[DEFAULT_TOPIC]
     output: list[dict[str, Any]] = []
 
     for index, difficulty in enumerate(plan):
-        bucket = QUESTION_BANK[difficulty]
-        bucket_index = cursor_by_difficulty[difficulty] % len(bucket)
+        bucket = topic_catalog[difficulty]
+        order = order_by_difficulty[difficulty]
+        if len(order) != len(bucket):
+            order = list(range(len(bucket)))
+            random.shuffle(order)
+            order_by_difficulty[difficulty] = order
+
+        cursor = cursor_by_difficulty[difficulty]
+        if cursor > 0 and cursor % len(order) == 0:
+            random.shuffle(order)
+
+        bucket_index = order[cursor % len(order)]
         template = bucket[bucket_index]
-        cursor_by_difficulty[difficulty] += 1
+        cursor_by_difficulty[difficulty] = cursor + 1
+        option_count = len(template.get("options", []))
+        answer_slot_order = answer_slot_order_by_count.get(option_count, [])
+        if len(answer_slot_order) != option_count:
+            answer_slot_order = list(range(option_count))
+            random.shuffle(answer_slot_order)
+            answer_slot_order_by_count[option_count] = answer_slot_order
+            answer_slot_cursor_by_count[option_count] = 0
+
+        answer_slot_cursor = answer_slot_cursor_by_count.get(option_count, 0)
+        if answer_slot_cursor > 0 and answer_slot_cursor % option_count == 0:
+            random.shuffle(answer_slot_order)
+
+        desired_correct_index = answer_slot_order[answer_slot_cursor % option_count]
+        answer_slot_cursor_by_count[option_count] = answer_slot_cursor + 1
+        shuffled_options, shuffled_correct_index = _shuffle_question_options(
+            template,
+            desired_correct_index=desired_correct_index,
+        )
 
         output.append(
             {
                 "id": str(index + 1),
-                "text": str(template["text"]).format(topic=normalized_topic),
-                "options": [str(option) for option in template.get("options", [])],
-                "correctIndex": int(template.get("correctIndex", 0) or 0),
+                "text": str(template["text"]),
+                "options": shuffled_options,
+                "correctIndex": shuffled_correct_index,
                 "difficulty": difficulty,
             }
         )
 
     return output
+
+
+def create_mock_questions(topic: str, count: int, difficulty_mode: DifficultyMode) -> list[dict[str, Any]]:
+    return create_topic_questions(topic, clamp_question_count(count), difficulty_mode)
 
 
 def next_team(team: Team) -> Team:
@@ -191,4 +273,3 @@ def calculate_speed_bonus(remaining_ms: int, question_time_ms: int = QUESTION_TI
     if ratio >= 0.34:
         return 1
     return 0
-

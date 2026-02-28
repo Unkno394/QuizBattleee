@@ -18,9 +18,17 @@ from .database import (
     save_room_snapshot,
 )
 from .auth_repository import add_coins as add_auth_user_coins
+from .auth_repository import add_wins as add_auth_user_wins
 from .auth_repository import get_user_by_id as get_auth_user_by_id
+from .auth_repository import has_room_invitation_access as has_auth_room_invitation_access
 from .redis_cache import is_redis_connected, set_room_snapshot as set_cached_room_snapshot
 logger = logging.getLogger(__name__)
+from .question_generation import (
+    QuestionGenerationUnavailable,
+    delete_generated_questions_file,
+    generate_questions_payload,
+    write_generated_questions_file,
+)
 
 from .runtime_constants import (
     AUTO_CAPTAIN_SINGLE_MEMBER_DELAY_MS,
@@ -29,6 +37,7 @@ from .runtime_constants import (
     DIFFICULTY_LEVELS,
     DYNAMIC_TEAM_NAMES,
     MAX_PLAYERS,
+    PLAYER_PRESENCE_DISCONNECT_GRACE_MS,
     QUESTION_TIME_MS,
     TEAM_KEYS,
 )
@@ -108,6 +117,7 @@ from .runtime_utils import (
     normalize_game_mode,
     normalize_player_name,
     normalize_player_token as _normalize_player_token,
+    is_supported_topic,
     normalize_team_name,
     normalize_topic,
     now_ms,
@@ -126,6 +136,9 @@ class QuizRuntime:
         self._db_snapshot_interval_ms = max(500, int(settings.db_room_snapshot_interval_ms))
         self._last_redis_snapshot_ms: dict[str, int] = {}
         self._last_db_snapshot_ms: dict[str, int] = {}
+        self._pending_presence_disconnect_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._background_result_tasks: set[asyncio.Task[None]] = set()
+        self._background_send_tasks: set[asyncio.Task[None]] = set()
         self._ws_stats: dict[str, int] = {
             "connectAttempts": 0,
             "connectSuccess": 0,
@@ -176,6 +189,133 @@ class QuizRuntime:
     def _clear_snapshot_tracking(self, room_id: str) -> None:
         self._last_redis_snapshot_ms.pop(room_id, None)
         self._last_db_snapshot_ms.pop(room_id, None)
+
+    def _presence_reconnect_keys(
+        self,
+        *,
+        auth_user_id: int | None = None,
+        player_token: str | None = None,
+        identity_key: str | None = None,
+    ) -> list[str]:
+        keys: list[str] = []
+        if auth_user_id is not None:
+            keys.append(f"acct:{int(auth_user_id)}")
+        if player_token:
+            keys.append(f"pt:{player_token}")
+        if identity_key:
+            keys.append(f"id:{identity_key}")
+        return list(dict.fromkeys(keys))
+
+    def _cancel_pending_presence_disconnect(
+        self,
+        room_id: str,
+        *,
+        auth_user_id: int | None = None,
+        player_token: str | None = None,
+        identity_key: str | None = None,
+    ) -> None:
+        reconnect_keys = self._presence_reconnect_keys(
+            auth_user_id=auth_user_id,
+            player_token=player_token,
+            identity_key=identity_key,
+        )
+        for reconnect_key in reconnect_keys:
+            task = self._pending_presence_disconnect_tasks.pop((room_id, reconnect_key), None)
+            if task is not None and not task.done():
+                task.cancel()
+                stale_keys = [
+                    key
+                    for key, mapped_task in self._pending_presence_disconnect_tasks.items()
+                    if mapped_task is task
+                ]
+                for stale_key in stale_keys:
+                    self._pending_presence_disconnect_tasks.pop(stale_key, None)
+
+    def _schedule_presence_disconnect_notice(
+        self,
+        room: RoomRuntime,
+        player: PlayerConnection,
+        text: str,
+    ) -> None:
+        reconnect_keys = self._presence_reconnect_keys(
+            auth_user_id=player.auth_user_id,
+            player_token=player.player_token,
+            identity_key=player.identity_key,
+        )
+        if not reconnect_keys:
+            self._append_system_chat_message(room, text, kind="presence")
+            return
+
+        room_id = room.room_id
+        self._cancel_pending_presence_disconnect(
+            room_id,
+            auth_user_id=player.auth_user_id,
+            player_token=player.player_token,
+            identity_key=player.identity_key,
+        )
+
+        async def runner() -> None:
+            task = asyncio.current_task()
+            if task is None:
+                return
+            try:
+                await asyncio.sleep(max(0, PLAYER_PRESENCE_DISCONNECT_GRACE_MS) / 1000)
+            except asyncio.CancelledError:
+                return
+
+            active_keys = [
+                key
+                for key in reconnect_keys
+                if self._pending_presence_disconnect_tasks.get((room_id, key)) is task
+            ]
+            if not active_keys:
+                return
+
+            async with self.rooms_lock:
+                current_room = self.rooms.get(room_id)
+            if current_room is None:
+                for key in active_keys:
+                    self._pending_presence_disconnect_tasks.pop((room_id, key), None)
+                return
+
+            async with current_room.lock:
+                for key in active_keys:
+                    if key.startswith("acct:"):
+                        expected = key[5:]
+                        if any(
+                            p.auth_user_id is not None and str(int(p.auth_user_id)) == expected
+                            for p in current_room.players.values()
+                        ):
+                            for mapped_key in active_keys:
+                                self._pending_presence_disconnect_tasks.pop((room_id, mapped_key), None)
+                            return
+                    elif key.startswith("pt:"):
+                        expected = key[3:]
+                        if any(
+                            p.player_token and p.player_token == expected
+                            for p in current_room.players.values()
+                        ):
+                            for mapped_key in active_keys:
+                                self._pending_presence_disconnect_tasks.pop((room_id, mapped_key), None)
+                            return
+                    elif key.startswith("id:"):
+                        expected = key[3:]
+                        if any(
+                            p.identity_key and p.identity_key == expected
+                            for p in current_room.players.values()
+                        ):
+                            for mapped_key in active_keys:
+                                self._pending_presence_disconnect_tasks.pop((room_id, mapped_key), None)
+                            return
+
+                self._append_system_chat_message(current_room, text, kind="presence")
+                await self._broadcast_and_persist(current_room)
+                for key in active_keys:
+                    self._pending_presence_disconnect_tasks.pop((room_id, key), None)
+
+        task = asyncio.create_task(runner(), name=f"{room_id}:presence-disconnect")
+        for reconnect_key in reconnect_keys:
+            self._pending_presence_disconnect_tasks[(room_id, reconnect_key)] = task
 
     def _identity_for_logs(self, identity_key: str | None) -> str:
         if not identity_key:
@@ -289,15 +429,16 @@ class QuizRuntime:
         room_type: str = "public",
         room_password: str | None = None,
     ) -> tuple[str, str]:
-        normalized_topic = normalize_topic(topic)
+        normalized_topic = normalize_topic(topic, allow_custom=True)
         normalized_count = clamp_question_count(question_count)
         normalized_difficulty = normalize_difficulty_mode(difficulty_mode)
         normalized_game_mode = normalize_game_mode(game_mode)
         normalized_room_type = str(room_type or "public").strip().lower()
         normalized_room_password = str(room_password or "").strip()[:64]
+        is_password_protected = normalized_room_type == "password"
         room_password_hash = (
             _hash_secret(normalized_room_password)
-            if normalized_room_type == "password" and normalized_room_password
+            if is_password_protected and normalized_room_password
             else ""
         )
         host_token = _generate_secret(24)
@@ -319,6 +460,8 @@ class QuizRuntime:
                     host_peer_id="",
                     host_token_hash=host_token_hash,
                     room_password_hash=room_password_hash,
+                    is_password_protected=is_password_protected,
+                    question_source="catalog" if is_supported_topic(normalized_topic) else "generated",
                 )
                 self.rooms[room_id] = room
                 created_room = room
@@ -328,10 +471,24 @@ class QuizRuntime:
         if created_room is None:
             raise RuntimeError("Failed to allocate room code")
 
+        if created_room.question_source == "generated":
+            try:
+                await self._populate_generated_room_questions(created_room)
+            except Exception:
+                async with self.rooms_lock:
+                    if self.rooms.get(created_room_id) is created_room:
+                        self.rooms.pop(created_room_id, None)
+                raise
+
         await self._persist_room(created_room)
         return created_room_id, host_token
 
     async def shutdown(self) -> None:
+        for task in set(self._pending_presence_disconnect_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._pending_presence_disconnect_tasks.clear()
+
         async with self.rooms_lock:
             rooms = list(self.rooms.values())
             self.rooms.clear()
@@ -339,6 +496,7 @@ class QuizRuntime:
         for room in rooms:
             async with room.lock:
                 self._clear_timers(room)
+                self._cleanup_generated_questions_file(room)
                 await self._persist_room(room, force_redis=True, force_db=True)
                 self._clear_snapshot_tracking(room.room_id)
 
@@ -515,6 +673,13 @@ class QuizRuntime:
             )
             return
 
+        self._cancel_pending_presence_disconnect(
+            room_id,
+            auth_user_id=auth_user_id,
+            player_token=player_token,
+            identity_key=identity_key,
+        )
+
         connection_allowed = True
         error_code = "ROOM_FULL"
         error_message = "Комната заполнена. Максимум 20 участников."
@@ -627,17 +792,27 @@ class QuizRuntime:
                         rejection_stat_key = "rejectHostTokenInvalid"
                 else:
                     is_host = False
-                    if connection_allowed and room.room_password_hash:
-                        if not room_password:
-                            connection_allowed = False
-                            error_code = "ROOM_PASSWORD_REQUIRED"
-                            error_message = "Для этой комнаты требуется пароль"
-                            rejection_stat_key = "rejectRoomPassword"
-                        elif _hash_secret(room_password) != room.room_password_hash:
-                            connection_allowed = False
-                            error_code = "ROOM_PASSWORD_INVALID"
-                            error_message = "Неверный пароль комнаты"
-                            rejection_stat_key = "rejectRoomPassword"
+                    room_requires_password = bool(
+                        getattr(room, "is_password_protected", False) or room.room_password_hash
+                    )
+                    if connection_allowed and room_requires_password:
+                        password_matches = bool(room.room_password_hash) and bool(room_password) and (
+                            _hash_secret(room_password) == room.room_password_hash
+                        )
+                        invitation_access = False
+                        if not password_matches and auth_user_id is not None:
+                            invitation_access = await has_auth_room_invitation_access(auth_user_id, room_id)
+                        if not password_matches and not invitation_access:
+                            if not room_password:
+                                connection_allowed = False
+                                error_code = "ROOM_PASSWORD_REQUIRED"
+                                error_message = "Для этой комнаты требуется пароль"
+                                rejection_stat_key = "rejectRoomPassword"
+                            else:
+                                connection_allowed = False
+                                error_code = "ROOM_PASSWORD_INVALID"
+                                error_message = "Неверный пароль комнаты"
+                                rejection_stat_key = "rejectRoomPassword"
 
                 if connection_allowed:
                     if is_host:
@@ -865,6 +1040,28 @@ class QuizRuntime:
         if room is None:
             return
 
+        if websocket is not None and PLAYER_PRESENCE_DISCONNECT_GRACE_MS > 0:
+            should_delay_disconnect = False
+            async with room.lock:
+                current = room.players.get(peer_id)
+                if current is None:
+                    return
+                if current.websocket is not websocket:
+                    # Stale disconnect from an old socket after connection handoff.
+                    self._increment_stat("staleDisconnects")
+                    self._log_ws_event(
+                        "disconnect_stale_ignored",
+                        roomId=room_id,
+                        peerId=peer_id,
+                        reason=reason,
+                        closeCode=close_code,
+                    )
+                    return
+                should_delay_disconnect = (not current.is_host) and self._is_game_in_progress(room)
+
+            if should_delay_disconnect:
+                await asyncio.sleep(max(0, PLAYER_PRESENCE_DISCONNECT_GRACE_MS) / 1000)
+
         remove_room_from_runtime = False
 
         async with room.lock:
@@ -901,6 +1098,7 @@ class QuizRuntime:
             left_message: str | None = None
             if not removed.is_host:
                 left_message = f"Участник {str(removed.name or 'Игрок')[:24]} вышел из игры."
+                self._schedule_presence_disconnect_notice(room, removed, left_message)
 
             self._cleanup_votes_for_player(room, peer_id)
 
@@ -940,6 +1138,19 @@ class QuizRuntime:
                     stop_reason_message = (
                         f"{left_message} Игра остановлена: в комнате недостаточно участников для двух команд."
                     )
+
+                ffa_stop_reason_message = None
+                if left_message:
+                    ffa_stop_reason_message = (
+                        f"{left_message} Игра остановлена: в режиме «Все против всех» игрок покинул комнату."
+                    )
+                if await self._stop_ffa_mode_if_player_left(
+                    room,
+                    removed=removed,
+                    reason=ffa_stop_reason_message,
+                ):
+                    return
+
                 if await self._stop_team_mode_if_not_enough_players(room, reason=stop_reason_message):
                     return
 
@@ -948,8 +1159,6 @@ class QuizRuntime:
                     self._schedule_single_member_auto_captain(room)
                     if self._are_all_teams_ready(room.captain_vote_ready_teams):
                         await self._finalize_captain_vote(room)
-                        if left_message:
-                            self._append_system_chat_message(room, left_message, kind="presence")
                         await self._broadcast_and_persist(room)
                         return
 
@@ -964,8 +1173,6 @@ class QuizRuntime:
 
                     if self._are_all_teams_ready(room.team_naming_ready_teams):
                         await self._finalize_team_naming(room)
-                        if left_message:
-                            self._append_system_chat_message(room, left_message, kind="presence")
                         await self._broadcast_and_persist(room)
                         return
 
@@ -973,13 +1180,9 @@ class QuizRuntime:
                     eligible_players = self._answer_eligible_players(room)
                     if eligible_players and len(room.answer_submissions) >= len(eligible_players):
                         await self._finalize_question(room)
-                        if left_message:
-                            self._append_system_chat_message(room, left_message, kind="presence")
                         await self._broadcast_and_persist(room)
                         return
 
-                if left_message:
-                    self._append_system_chat_message(room, left_message, kind="presence")
                 await self._broadcast_and_persist(room)
 
             logger.info(
@@ -1077,8 +1280,12 @@ class QuizRuntime:
         host_peer_id: str,
         host_token_hash: str = "",
         room_password_hash: str = "",
+        is_password_protected: bool = False,
+        question_source: str = "catalog",
+        questions: list[dict[str, Any]] | None = None,
+        generated_questions_path: str | None = None,
     ) -> RoomRuntime:
-        normalized_topic = normalize_topic(topic)
+        normalized_topic = normalize_topic(topic, allow_custom=True)
         normalized_difficulty = normalize_difficulty_mode(difficulty_mode)
         normalized_count = clamp_question_count(question_count)
         return RoomRuntime(
@@ -1087,10 +1294,15 @@ class QuizRuntime:
             difficulty_mode=normalized_difficulty,
             game_mode=normalize_game_mode(game_mode),
             question_count=normalized_count,
-            questions=create_mock_questions(normalized_topic, normalized_count, normalized_difficulty),
+            questions=questions
+            if isinstance(questions, list) and questions
+            else create_mock_questions(normalized_topic, normalized_count, normalized_difficulty),
             host_peer_id=host_peer_id,
             host_token_hash=host_token_hash,
             room_password_hash=room_password_hash,
+            is_password_protected=is_password_protected,
+            question_source="generated" if question_source == "generated" else "catalog",
+            generated_questions_path=generated_questions_path,
             timers={},
         )
 
@@ -1165,20 +1377,73 @@ class QuizRuntime:
 
         return None
 
+    def _cleanup_generated_questions_file(self, room: RoomRuntime) -> None:
+        delete_generated_questions_file(room.generated_questions_path)
+        room.generated_questions_path = None
+
+    async def _populate_generated_room_questions(self, room: RoomRuntime) -> None:
+        payload = await generate_questions_payload(room.topic, room.question_count, room.difficulty_mode)
+        self._cleanup_generated_questions_file(room)
+        room.questions = [
+            dict(question)
+            for question in payload.get("questions", [])
+            if isinstance(question, dict)
+        ]
+        room.generated_questions_path = write_generated_questions_file(room.room_id, payload)
+        logger.warning(
+            "generated_questions ready room=%s topic=%s count=%s difficulty=%s path=%s",
+            room.room_id,
+            room.topic,
+            room.question_count,
+            room.difficulty_mode,
+            room.generated_questions_path,
+        )
+
+    def _schedule_persist_game_result(self, room: RoomRuntime) -> None:
+        if room.results_recorded:
+            logger.warning(
+                "schedule_persist_game_result skipped room=%s reason=already_recorded",
+                room.room_id,
+            )
+            return
+
+        async def runner() -> None:
+            try:
+                logger.warning("schedule_persist_game_result started room=%s", room.room_id)
+                await self._persist_game_result(room)
+                logger.warning("schedule_persist_game_result completed room=%s", room.room_id)
+            except Exception:
+                logger.exception("schedule_persist_game_result failed room=%s", room.room_id)
+
+        task = asyncio.create_task(runner(), name=f"{room.room_id}:persist-result")
+        self._background_result_tasks.add(task)
+        task.add_done_callback(lambda current: self._background_result_tasks.discard(current))
+
     async def _award_currency_after_game(
         self,
         room: RoomRuntime,
         result_players: list[dict[str, Any]],
     ) -> None:
         if not result_players:
+            logger.warning("award_currency skipped room=%s reason=no_result_players", room.room_id)
             return
 
+        logger.warning(
+            "award_currency preparing room=%s result_players=%s",
+            room.room_id,
+            result_players,
+        )
         awarded_by_user_id: dict[int, int] = {}
         points_by_peer: dict[str, int] = {
             str(row.get("peerId")): max(0, int(row.get("points", 0) or 0))
             for row in result_players
             if row.get("peerId") is not None
         }
+        logger.warning(
+            "award_currency points_by_peer room=%s points_by_peer=%s",
+            room.room_id,
+            points_by_peer,
+        )
 
         def add_award(peer_id: str, amount: int) -> None:
             if amount <= 0:
@@ -1224,7 +1489,19 @@ class QuizRuntime:
 
         for user_id, amount in awarded_by_user_id.items():
             try:
+                logger.warning(
+                    "award_currency room=%s user_id=%s amount=%s",
+                    room.room_id,
+                    user_id,
+                    amount,
+                )
                 await add_auth_user_coins(user_id, amount)
+                logger.warning(
+                    "award_currency completed room=%s user_id=%s amount=%s",
+                    room.room_id,
+                    user_id,
+                    amount,
+                )
             except Exception:
                 logger.exception(
                     "Failed to award coins for room=%s user=%s amount=%s",
@@ -1233,16 +1510,132 @@ class QuizRuntime:
                     amount,
                 )
 
+        logger.warning(
+            "award_currency completed room=%s awarded_by_user_id=%s",
+            room.room_id,
+            awarded_by_user_id,
+        )
+
+    async def _award_wins_after_game(
+        self,
+        room: RoomRuntime,
+        result_players: list[dict[str, Any]],
+    ) -> None:
+        if not result_players:
+            logger.warning("award_wins skipped room=%s reason=no_result_players", room.room_id)
+            return
+
+        winning_user_ids: set[int] = set()
+
+        if room.game_mode == "ffa":
+            points_by_user_id: dict[int, int] = {}
+            for row in result_players:
+                try:
+                    user_id = int(row.get("accountUserId"))
+                except (TypeError, ValueError):
+                    continue
+                points = max(0, int(row.get("points", 0) or 0))
+                points_by_user_id[user_id] = max(points_by_user_id.get(user_id, 0), points)
+
+            if not points_by_user_id:
+                logger.warning("award_wins skipped room=%s mode=ffa reason=no_account_user_ids", room.room_id)
+                return
+
+            max_points = max(points_by_user_id.values())
+            for user_id, points in points_by_user_id.items():
+                if points == max_points:
+                    winning_user_ids.add(user_id)
+            logger.warning(
+                "award_wins room=%s mode=ffa max_points=%s points_by_user_id=%s winners=%s",
+                room.room_id,
+                max_points,
+                points_by_user_id,
+                sorted(winning_user_ids),
+            )
+        else:
+            score_a = int(room.scores.get("A", 0) or 0)
+            score_b = int(room.scores.get("B", 0) or 0)
+            winner_team: Team | None = None
+            if score_a > score_b:
+                winner_team = "A"
+            elif score_b > score_a:
+                winner_team = "B"
+
+            if winner_team is None:
+                logger.warning(
+                    "award_wins skipped room=%s mode=%s reason=draw score_a=%s score_b=%s",
+                    room.room_id,
+                    room.game_mode,
+                    score_a,
+                    score_b,
+                )
+                return
+
+            for row in result_players:
+                try:
+                    user_id = int(row.get("accountUserId"))
+                except (TypeError, ValueError):
+                    continue
+                if row.get("team") == winner_team:
+                    winning_user_ids.add(user_id)
+            logger.warning(
+                "award_wins room=%s mode=%s winner_team=%s score_a=%s score_b=%s winners=%s result_players=%s",
+                room.room_id,
+                room.game_mode,
+                winner_team,
+                score_a,
+                score_b,
+                sorted(winning_user_ids),
+                result_players,
+            )
+
+        for user_id in winning_user_ids:
+            try:
+                await add_auth_user_wins(user_id, 1)
+            except Exception:
+                logger.exception(
+                    "Failed to award win for room=%s user=%s",
+                    room.room_id,
+                    user_id,
+                )
+
     async def _persist_game_result(self, room: RoomRuntime) -> None:
+        if room.results_recorded:
+            logger.warning("persist_game_result skipped room=%s reason=already_recorded", room.room_id)
+            return
+        room.results_recorded = True
+
         result_players = self._build_result_players(room)
-        await self._award_currency_after_game(room, result_players)
+        logger.warning(
+            "persist_game_result room=%s mode=%s phase=%s scores=%s player_scores=%s result_players=%s",
+            room.room_id,
+            room.game_mode,
+            room.phase,
+            room.scores,
+            room.player_scores,
+            result_players,
+        )
+        try:
+            logger.warning("persist_game_result award_currency start room=%s", room.room_id)
+            await asyncio.wait_for(self._award_currency_after_game(room, result_players), timeout=5)
+            logger.warning("persist_game_result award_currency done room=%s", room.room_id)
+        except Exception:
+            logger.exception("persist_game_result award_currency failed room=%s", room.room_id)
+
+        try:
+            logger.warning("persist_game_result award_wins start room=%s", room.room_id)
+            await asyncio.wait_for(self._award_wins_after_game(room, result_players), timeout=5)
+            logger.warning("persist_game_result award_wins done room=%s", room.room_id)
+        except Exception:
+            logger.exception("persist_game_result award_wins failed room=%s", room.room_id)
         
         # Add bonus points to the host
         if room.host_peer_id:
             host = room.players.get(room.host_peer_id)
             if host and host.auth_user_id:
                 try:
-                    await add_auth_user_coins(host.auth_user_id, 5)
+                    logger.warning("persist_game_result host_bonus room=%s user_id=%s amount=5", room.room_id, host.auth_user_id)
+                    await asyncio.wait_for(add_auth_user_coins(host.auth_user_id, 5), timeout=5)
                 except Exception:
                     logger.exception("Failed to add bonus coins to host %s", host.auth_user_id)
         
@@ -1253,13 +1646,23 @@ class QuizRuntime:
                 room, peer_id, fallback
             ),
         )
+        logger.warning(
+            "persist_game_result payload room=%s winner_team=%s game_mode=%s payload_keys=%s",
+            room.room_id,
+            payload.get("winner_team"),
+            payload.get("payload_json", {}).get("gameMode") if isinstance(payload.get("payload_json"), dict) else None,
+            sorted(payload.keys()),
+        )
         try:
-            await save_game_result(**payload)
+            await asyncio.wait_for(save_game_result(**payload), timeout=5)
+            logger.warning("persist_game_result saved room=%s", room.room_id)
         except Exception:
             if room.game_mode == "ffa":
                 logger.exception("Failed to persist FFA game result for room %s", room.room_id)
             else:
                 logger.exception("Failed to persist game result for room %s", room.room_id)
+        finally:
+            self._cleanup_generated_questions_file(room)
 
     async def _broadcast_and_persist(self, room: RoomRuntime) -> None:
         self._mark_state_changed(room)
@@ -1274,7 +1677,19 @@ class QuizRuntime:
         peer_id: str | None = None,
     ) -> None:
         try:
-            await websocket.send_json(data)
+            await asyncio.wait_for(websocket.send_json(data), timeout=1.5)
+            logger.debug(
+                "[SEND_OK] room=%s peer=%s",
+                room_id or "-",
+                peer_id or "-",
+            )
+        except asyncio.TimeoutError:
+            self._increment_stat("sendFailures")
+            logger.warning(
+                "[SEND_TIMEOUT] room=%s peer=%s",
+                room_id or "-",
+                peer_id or "-",
+            )
         except Exception as exc:
             # Connection may already be closed.
             self._increment_stat("sendFailures")
@@ -1288,13 +1703,52 @@ class QuizRuntime:
             )
 
     async def _broadcast_state(self, room: RoomRuntime) -> None:
-        for player in list(room.players.values()):
-            await self._send_safe(
-                player.websocket,
-                self._build_state(room, player),
-                room_id=room.room_id,
-                peer_id=player.peer_id,
+        players = list(room.players.values())
+        logger.warning(
+            "broadcast_state start room=%s phase=%s players=%s",
+            room.room_id,
+            room.phase,
+            [player.peer_id for player in players],
+        )
+
+        tasks = []
+        for player in players:
+            try:
+                payload = self._build_state(room, player)
+                logger.warning(
+                    "broadcast_state payload_ready room=%s phase=%s peer=%s",
+                    room.room_id,
+                    room.phase,
+                    player.peer_id,
+                )
+            except Exception:
+                logger.exception(
+                    "broadcast_state payload_failed room=%s phase=%s peer=%s",
+                    room.room_id,
+                    room.phase,
+                    player.peer_id,
+                )
+                continue
+
+            send_task = asyncio.create_task(
+                self._send_safe(
+                    player.websocket,
+                    payload,
+                    room_id=room.room_id,
+                    peer_id=player.peer_id,
+                ),
+                name=f"{room.room_id}:send:{player.peer_id}",
             )
+            self._background_send_tasks.add(send_task)
+            send_task.add_done_callback(lambda current: self._background_send_tasks.discard(current))
+            tasks.append(send_task)
+
+        logger.warning(
+            "broadcast_state done room=%s phase=%s players=%s",
+            room.room_id,
+            room.phase,
+            [player.peer_id for player in players],
+        )
 
     def _append_result_event(
         self,
@@ -1771,6 +2225,32 @@ class QuizRuntime:
             if not player.is_host and not player.is_spectator and player.team == team
         ]
 
+    def _is_game_in_progress(self, room: RoomRuntime) -> bool:
+        if room.phase in {"lobby", "results"}:
+            return False
+        if room.phase == "host-reconnect":
+            paused_phase_raw = room.paused_state.get("phase") if room.paused_state else None
+            paused_phase = str(paused_phase_raw) if paused_phase_raw is not None else None
+            return paused_phase not in {None, "lobby", "results"}
+        return True
+
+    async def _stop_ffa_mode_if_player_left(
+        self,
+        room: RoomRuntime,
+        removed: PlayerConnection,
+        reason: str | None = None,
+    ) -> bool:
+        if room.game_mode != "ffa":
+            return False
+        if removed.is_host:
+            return False
+        if not self._is_game_in_progress(room):
+            return False
+
+        message = reason or "Игра остановлена: в режиме «Все против всех» игрок покинул комнату."
+        await self._reset_game(room, system_message=message)
+        return True
+
     async def _stop_team_mode_if_not_enough_players(
         self,
         room: RoomRuntime,
@@ -1778,7 +2258,7 @@ class QuizRuntime:
     ) -> bool:
         if room.game_mode not in {"classic", "chaos"}:
             return False
-        if room.phase in {"lobby", "results"}:
+        if not self._is_game_in_progress(room):
             return False
 
         team_a_count = len(self._active_team_players(room, "A"))
@@ -1965,13 +2445,30 @@ class QuizRuntime:
                 teams.append(team)
         return teams
 
+    def _all_non_empty_teams_single_member(self, room: RoomRuntime) -> bool:
+        team_sizes = [len(self._team_players(room, team)) for team in TEAM_KEYS]
+        non_empty_sizes = [size for size in team_sizes if size > 0]
+        return bool(non_empty_sizes) and all(size == 1 for size in non_empty_sizes)
+
     def _schedule_single_member_auto_captain(self, room: RoomRuntime) -> None:
         self._cancel_timer(room, "captainAuto")
         teams_for_auto = self._single_member_teams_waiting_captain(room)
         if not teams_for_auto:
             return
+        logger.warning(
+            "captain_auto scheduled room=%s teams=%s delay_ms=%s",
+            room.room_id,
+            teams_for_auto,
+            AUTO_CAPTAIN_SINGLE_MEMBER_DELAY_MS,
+        )
 
         async def auto_pick_single_member_captains(inner_room: RoomRuntime) -> None:
+            logger.warning(
+                "captain_auto fired room=%s phase=%s teams=%s",
+                inner_room.room_id,
+                inner_room.phase,
+                teams_for_auto,
+            )
             if inner_room.phase != "captain-vote":
                 return
 
@@ -1984,6 +2481,12 @@ class QuizRuntime:
                     continue
 
                 chosen = members[0]
+                logger.warning(
+                    "captain_auto choose room=%s team=%s peer_id=%s",
+                    inner_room.room_id,
+                    team,
+                    chosen.peer_id,
+                )
                 inner_room.captains[team] = chosen.peer_id
                 inner_room.captain_vote_ready_teams[team] = True
                 changed = True
@@ -2004,6 +2507,16 @@ class QuizRuntime:
             AUTO_CAPTAIN_SINGLE_MEMBER_DELAY_MS,
             auto_pick_single_member_captains,
         )
+
+    def _captain_vote_timeout_ms(self, room: RoomRuntime) -> int:
+        non_empty_team_sizes = [
+            len(self._team_players(room, team))
+            for team in TEAM_KEYS
+            if len(self._team_players(room, team)) > 0
+        ]
+        if non_empty_team_sizes and all(size <= 1 for size in non_empty_team_sizes):
+            return AUTO_CAPTAIN_SINGLE_MEMBER_DELAY_MS
+        return CAPTAIN_VOTE_TIME_MS
 
     def _initialize_team_naming_progress(self, room: RoomRuntime) -> None:
         for team in TEAM_KEYS:
@@ -2136,6 +2649,7 @@ class QuizRuntime:
 
     def _reset_room_for_empty_connections(self, room: RoomRuntime) -> None:
         self._clear_timers(room)
+        self._cleanup_generated_questions_file(room)
         room.phase = "lobby"
         room.current_question_index = -1
         room.active_team = "A"
@@ -2164,7 +2678,9 @@ class QuizRuntime:
         room.chat = []
         room.players = {}
         room.host_peer_id = ""
-        room.questions = create_mock_questions(room.topic, room.question_count, room.difficulty_mode)
+        if room.question_source == "catalog":
+            room.questions = create_mock_questions(room.topic, room.question_count, room.difficulty_mode)
+        room.results_recorded = False
         self._reset_captain_state(room)
         room.team_names = {"A": "Команда A", "B": "Команда B"}
 
@@ -2176,9 +2692,19 @@ class QuizRuntime:
     ) -> None:
         """Send a room invitation to a friend via API, host will receive notification"""
         from app.auth_repository import send_room_invitation
-        
+
+        if inviter.auth_user_id is None:
+            return
+        try:
+            inviter_id = int(inviter.auth_user_id)
+            target_friend_id = int(friend_id)
+        except (TypeError, ValueError):
+            return
+        if target_friend_id <= 0 or target_friend_id == inviter_id:
+            return
+
         # Send invitation through API
-        await send_room_invitation(inviter.auth_user_id, friend_id, room.room_id)
+        await send_room_invitation(inviter_id, target_friend_id, room.room_id)
         
         # Notify host about the invitation request
         host = room.players.get(room.host_peer_id)
@@ -2188,9 +2714,9 @@ class QuizRuntime:
                 {
                     "type": "room-invitation-request",
                     "roomId": room.room_id,
-                    "inviterId": inviter.auth_user_id,
+                    "inviterId": inviter_id,
                     "inviterName": inviter.name,
-                    "friendId": friend_id,
+                    "friendId": target_friend_id,
                 },
                 room_id=room.room_id,
                 peer_id=host.peer_id,
@@ -2218,3 +2744,6 @@ class QuizRuntime:
                 )
 
 
+
+# global singleton used by other modules
+runtime = QuizRuntime()

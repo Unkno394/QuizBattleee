@@ -23,3 +23,23 @@ class CreateRoomRequest(BaseModel):
         else:
             self.roomPassword = None
         return self
+
+
+class VerifyRoomPasswordRequest(BaseModel):
+    password: str = Field(default="", max_length=64)
+
+
+class QuickGameQuestionsRequest(BaseModel):
+    topic: str = Field(default="Общая эрудиция", max_length=80)
+    difficulty: Literal["easy", "medium", "hard", "progressive"] = Field(default="medium")
+    questionCount: int = Field(default=7, ge=5, le=7)
+
+
+class QuickGameAnswerItem(BaseModel):
+    questionId: str = Field(min_length=1, max_length=16)
+    selectedIndex: int | None = Field(default=None, ge=0, le=3)
+
+
+class QuickGameCompleteRequest(BaseModel):
+    rewardToken: str = Field(min_length=1, max_length=4000)
+    answers: list[QuickGameAnswerItem] = Field(default_factory=list, max_length=7)

@@ -4,12 +4,18 @@ import { useCallback, useEffect, useState } from "react";
 import { CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 
 export type AlertType = "success" | "error" | "warning" | "info";
+export type AlertAction = {
+  label: string;
+  href?: string;
+  onClick?: () => void;
+};
 
 interface CustomAlertProps {
   message: string;
   type?: AlertType;
   duration?: number;
   onClose?: () => void;
+  action?: AlertAction;
 }
 
 export default function CustomAlert({
@@ -17,6 +23,7 @@ export default function CustomAlert({
   type = "info",
   duration = 5000,
   onClose,
+  action,
 }: CustomAlertProps) {
   const [isExiting, setIsExiting] = useState(false);
 
@@ -65,6 +72,17 @@ export default function CustomAlert({
     }, 300);
   }, [onClose]);
 
+  const handleActionClick = useCallback(() => {
+    try {
+      action?.onClick?.();
+      if (!action?.onClick && action?.href && typeof window !== "undefined") {
+        window.location.href = action.href;
+      }
+    } finally {
+      handleClose();
+    }
+  }, [action, handleClose]);
+
   useEffect(() => {
     if (duration > 0 && !isExiting) {
       const timer = window.setTimeout(() => {
@@ -77,23 +95,23 @@ export default function CustomAlert({
 
   return (
     <>
-      <div className="pointer-events-none fixed right-4 top-4 z-[9999] flex items-start justify-end p-4">
+      <div className="pointer-events-none fixed inset-x-0 bottom-3 z-[9999] flex items-end justify-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:justify-end sm:px-0 sm:pb-0">
         <div
           className={`
             ${colors[type].bg}
             ${colors[type].border}
-            min-w-[320px] max-w-md w-full rounded-xl border p-4
+            w-full max-w-[min(100vw-1.5rem,28rem)] rounded-2xl border p-3.5 shadow-2xl shadow-black/30 backdrop-blur-xl sm:min-w-[320px] sm:p-4
             shadow-2xl shadow-black/30 backdrop-blur-xl
             transform transition-all duration-300 ease-in-out
-            ${isExiting ? "translate-x-[20px] opacity-0" : "translate-x-0 opacity-100"}
+            ${isExiting ? "translate-y-3 opacity-0 sm:translate-x-[20px] sm:translate-y-0" : "translate-y-0 opacity-100"}
             pointer-events-auto
           `}
         >
-          <div className="flex items-start gap-3">
+          <div className="flex items-start gap-2.5 sm:gap-3">
             <div className={`${colors[type].icon} mt-0.5 flex-shrink-0`}>{iconNode[type]}</div>
 
             <div className="min-w-0 flex-1">
-              <p className={`${colors[type].text} whitespace-pre-line text-sm font-medium leading-relaxed`}>
+              <p className={`${colors[type].text} whitespace-pre-line text-[13px] font-medium leading-relaxed sm:text-sm`}>
                 {message}
               </p>
             </div>
@@ -109,6 +127,18 @@ export default function CustomAlert({
               <X className="h-4 w-4" />
             </button>
           </div>
+
+          {action?.label ? (
+            <div className="mt-3 flex items-center justify-stretch sm:justify-end">
+              <button
+                type="button"
+                onClick={handleActionClick}
+                className="w-full rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/20 sm:w-auto sm:rounded-lg sm:py-1.5"
+              >
+                {action.label}
+              </button>
+            </div>
+          ) : null}
 
           {duration > 0 ? (
             <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10">
@@ -142,13 +172,20 @@ export function useAlert() {
     message: string;
     type: AlertType;
     duration?: number;
+    action?: AlertAction;
   } | null>(null);
 
-  const notify = useCallback((message: string, type: AlertType = "info", duration = 5000) => {
+  const notify = useCallback((
+    message: string,
+    type: AlertType = "info",
+    duration = 5000,
+    action?: AlertAction
+  ) => {
     setAlertState({
       message,
       type,
       duration,
+      action,
     });
   }, []);
 
@@ -164,6 +201,7 @@ export function useAlert() {
         message={alertState.message}
         type={alertState.type}
         duration={alertState.duration}
+        action={alertState.action}
         onClose={hideAlert}
       />
     );

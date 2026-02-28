@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Trophy, Users } from "lucide-react";
 import AnimatedBackground from "@/components/AnimatedBackground";
@@ -27,11 +28,26 @@ const initialsOf = (name: string) => {
 };
 
 export default function RatingPage() {
+  const router = useRouter();
   const [scope, setScope] = useState<LeaderboardScope>("all");
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [friendsCount, setFriendsCount] = useState<number | null>(null);
+
+  // read initial scope from URL when client-side
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const param = (new URL(window.location.href).searchParams.get("scope") as LeaderboardScope) || "all";
+      setScope(param);
+    }
+    const onPop = () => {
+      const param = (new URL(window.location.href).searchParams.get("scope") as LeaderboardScope) || "all";
+      setScope(param);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +78,9 @@ export default function RatingPage() {
       cancelled = true;
     };
   }, [scope]);
+
+  // keep scope in sync if query param changes (back/forward navigation)
+  // (handled via popstate listener in the earlier effect)
 
   const emptyMessage = useMemo(() => {
     if (scope === "friends") {
@@ -98,6 +117,12 @@ export default function RatingPage() {
                 setIsLoading(true);
                 setError("");
                 setScope("all");
+                // update URL query param
+                if (typeof window !== "undefined") {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("scope");
+                  router.replace(url.toString());
+                }
               }}
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
                 scope === "all"
@@ -114,6 +139,11 @@ export default function RatingPage() {
                 setIsLoading(true);
                 setError("");
                 setScope("friends");
+                if (typeof window !== "undefined") {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("scope", "friends");
+                  router.replace(url.toString());
+                }
               }}
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
                 scope === "friends"

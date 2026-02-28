@@ -97,6 +97,7 @@ async def init_db() -> None:
               password_hash VARCHAR(255) NOT NULL,
               avatar_url TEXT,
               coins INTEGER NOT NULL DEFAULT 0,
+              wins_total INTEGER NOT NULL DEFAULT 0,
               profile_frame VARCHAR(64),
               equipped_cat_skin VARCHAR(64),
               equipped_dog_skin VARCHAR(64),
@@ -118,6 +119,9 @@ async def init_db() -> None:
         )
         await conn.execute(
             "ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS coins INTEGER NOT NULL DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS wins_total INTEGER NOT NULL DEFAULT 0"
         )
         await conn.execute(
             "ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS profile_frame VARCHAR(64)"
@@ -174,6 +178,17 @@ async def init_db() -> None:
               item_id VARCHAR(64) NOT NULL,
               created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
               UNIQUE (user_id, item_id)
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quick_game_reward_claims (
+              id BIGSERIAL PRIMARY KEY,
+              user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+              token_hash VARCHAR(64) UNIQUE NOT NULL,
+              coins_awarded INTEGER NOT NULL DEFAULT 0,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
         )

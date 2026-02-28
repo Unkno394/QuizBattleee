@@ -105,6 +105,7 @@ def build_state_payload(
         players_payload.append(
             {
                 "peerId": player.peer_id,
+                "authUserId": player.auth_user_id,
                 "name": player.name,
                 "team": visible_team_for_viewer(room, viewer, player),
                 "isHost": player.is_host,
@@ -170,6 +171,7 @@ def build_state_payload(
             "manualPauseByName": room.manual_pause_by_name,
             "scores": room.scores,
             "playerScores": room.player_scores,
+            "hasPassword": bool(room.is_password_protected or room.room_password_hash),
             "teamNames": room.team_names,
             "captains": room.captains,
             "captainVotes": build_votes_for_viewer(room, viewer),

@@ -178,6 +178,11 @@ def build_result_players(
         rows.append(
             {
                 "peerId": peer_id,
+                "accountUserId": (
+                    int(raw.get("accountUserId"))
+                    if raw.get("accountUserId") is not None
+                    else None
+                ),
                 "name": str(raw.get("name") or player_name_for_peer(peer_id))[:24],
                 "team": team,
                 "answers": answers,

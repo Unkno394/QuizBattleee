@@ -159,7 +159,6 @@ function SkinPreview({ item }: { item: ShopCatalogItem }) {
     () => buildMarketOverlayFrames(item.id, "common", baseFrames),
     [baseFrames, item.id]
   );
-  const previewFrames = skinFrames.length ? skinFrames : baseFrames;
   const previewTuning = getMarketMascotOverlayTuning(item.id);
   const previewScale = previewTuning.scale;
   const previewOffsetY = previewTuning.offsetY;
@@ -175,8 +174,8 @@ function SkinPreview({ item }: { item: ShopCatalogItem }) {
           }}
         >
           <MascotFramePlayer
-            frames={previewFrames}
-            overlayFrames={[]}
+            frames={baseFrames}
+            overlayFrames={skinFrames}
             fps={5}
             mood="common"
             preloadAllFrames

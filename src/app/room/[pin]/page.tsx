@@ -3,10 +3,30 @@
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AnimatedBackground from "@/components/AnimatedBackground";
-import { Ban, Pause, Play, Store } from "lucide-react";
+import { Ban, Pause, Play, Store, Users } from "lucide-react";
+import FriendsBtn from "@/components/FriendsBtn";
+import { PlayerList } from "@/components/PlayerList";
+
+const getStoredAccessToken = () => {
+  if (typeof window === "undefined") return "";
+  const raw = window.localStorage.getItem("access_token");
+  if (!raw) return "";
+  const token = raw.trim();
+  if (!token || token === "undefined" || token === "null") return "";
+  return token;
+};
+
+type HostInviteApproval = {
+  id: number;
+  room_id: string;
+  inviter_name: string;
+  invitee_name: string;
+};
+
 import { useAlert } from "../../components/CustomAlert";
 import { useProfileAvatar } from "@/shared/hooks/useProfileAvatar";
 import { ShopModal } from "@/shared/shop/ShopModal";
+import { fetchApi, toBearerToken } from "@/shared/api/base";
 import { buyShopItem, equipShopItem, getShop, ShopCatalogItem, ShopState } from "@/shared/api/auth";
 import {
   buildMarketOverlayFrames,
@@ -53,15 +73,6 @@ import {
 } from "@/features/room/utils";
 import { useRoomConnection } from "@/features/room/hooks/useRoomConnection";
 
-const getStoredAccessToken = () => {
-  if (typeof window === "undefined") return "";
-  const raw = window.localStorage.getItem("access_token");
-  if (!raw) return "";
-  const token = raw.trim();
-  if (!token || token === "undefined" || token === "null") return "";
-  return token;
-};
-
 export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ pin: string }>();
@@ -88,8 +99,12 @@ export default function RoomPage() {
   const [shopState, setShopState] = useState<ShopState | null>(null);
   const [shopBusyId, setShopBusyId] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState("");
+  const [showPlayerList, setShowPlayerList] = useState(false);
+  const [hostApproval, setHostApproval] = useState<HostInviteApproval | null>(null);
+  const authToken = accessToken || getStoredAccessToken();
   const {
     coins: profileCoins,
+    preferredMascot,
     equippedCatSkin,
     equippedDogSkin,
     equippedVictoryFrontEffect,
@@ -109,6 +124,35 @@ export default function RoomPage() {
   const handleRequireJoin = useCallback(() => {
     router.replace("/");
   }, [router]);
+  const [friendRefreshKey, setFriendRefreshKey] = useState(0);
+  const [badgeHasRequests, setBadgeHasRequests] = useState(false);
+
+  const handleFriendReceived = useCallback((requesterId: number) => {
+    // bump refresh key to trigger PlayerList reload
+    setFriendRefreshKey((k) => k + 1);
+    setBadgeHasRequests(true);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("qb:friend-request-received", {
+          detail: { requesterId },
+        })
+      );
+    }
+    notify("Вам пришла новая заявка в друзья.", "info");
+  }, [notify]);
+
+  const handleFriendResolved = useCallback((requesterId: number, accepted: boolean) => {
+    setFriendRefreshKey((k) => k + 1);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("qb:friend-request-resolved", {
+          detail: { requesterId, accepted },
+        })
+      );
+    }
+    // if accepted or declined we may need to clear badge if no requests left; simplest is to force reload of badge when modal closes
+  }, []);
+
   const {
     peerId,
     isHost,
@@ -121,7 +165,13 @@ export default function RoomPage() {
     isSocketReady,
     send,
     setError,
-  } = useRoomConnection({ pin, onRequireJoin: handleRequireJoin, notify });
+  } = useRoomConnection({
+    pin,
+    onRequireJoin: handleRequireJoin,
+    notify,
+    onFriendRequestReceived: handleFriendReceived,
+    onFriendRequestResolved: handleFriendResolved,
+  });
 
   useEffect(() => {
     const timerMs = isLowPerformanceMode ? 1000 : 500;
@@ -150,6 +200,7 @@ export default function RoomPage() {
   }, [isExitModalOpen, isSkipQuestionModalOpen, isShopOpen]);
 
   const me = roomState?.players.find((player) => player.peerId === peerId) || null;
+  const meBackendUserId = me?.authUserId ?? null;
   const hostPlayer = roomState?.players.find((player) => player.isHost) || null;
   const gameMode: GameMode = roomState?.gameMode || "classic";
   const isClassicMode = gameMode === "classic";
@@ -173,11 +224,15 @@ export default function RoomPage() {
         : "cat"
       : "dog";
   const neutralMascotKind: MascotKind = mascotKindByPeerId(peerId);
+  const preferredMascotKind: MascotKind | null =
+    preferredMascot === "cat" || preferredMascot === "dog" ? preferredMascot : null;
   const mascotKind: MascotKind =
     myTeam === "A"
       ? "dog"
       : myTeam === "B"
       ? "cat"
+      : (effectiveIsHost || isFfaMode) && preferredMascotKind
+      ? preferredMascotKind
       : effectiveIsHost
       ? hostMascotKind
       : neutralMascotKind;
@@ -287,6 +342,12 @@ export default function RoomPage() {
   }, [effectiveIsSpectator, notify, roomState]);
 
   useEffect(() => {
+    if (roomState?.phase === "lobby") {
+      setShowPlayerList(false);
+    }
+  }, [roomState?.phase]);
+
+  useEffect(() => {
     if (!accessToken) {
       setShopCatalog([]);
       setShopState(null);
@@ -308,6 +369,35 @@ export default function RoomPage() {
       cancelled = true;
     };
   }, [accessToken]);
+
+  useEffect(() => {
+    if (!authToken || !pin || !effectiveIsHost || roomState?.hasPassword) {
+      setHostApproval(null);
+      return;
+    }
+    let cancelled = false;
+    const loadPending = async () => {
+      try {
+        const response = await fetchApi(`/api/rooms/${pin}/invitations/pending`, {
+          headers: { Authorization: toBearerToken(authToken) },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const first = Array.isArray(data?.invitations) ? data.invitations[0] : null;
+        if (!cancelled) {
+          setHostApproval(first || null);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+    void loadPending();
+    const interval = window.setInterval(loadPending, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [authToken, effectiveIsHost, pin, roomState?.hasPassword]);
 
   const formatDisplayName = (name: string, targetPeerId?: string | null, maxLength = 20) => {
     const isSelf = !!peerId && !!targetPeerId && peerId === targetPeerId;
@@ -1004,6 +1094,24 @@ export default function RoomPage() {
     router.push("/");
   };
 
+  const respondHostApproval = async (approve: boolean) => {
+    if (!authToken || !hostApproval) return;
+    try {
+      await fetchApi("/api/rooms/invite/host_respond", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: toBearerToken(authToken),
+        },
+        body: JSON.stringify({ invitation_id: hostApproval.id, approve }),
+      });
+      setHostApproval(null);
+      notify(approve ? "Заявка одобрена." : "Заявка отклонена.", approve ? "success" : "info");
+    } catch {
+      notify("Не удалось обработать заявку.", "error");
+    }
+  };
+
   const renderLobby = () => (
     <RoomLobbySection
       roomTopic={roomState?.topic || "QuizBattle"}
@@ -1017,6 +1125,10 @@ export default function RoomPage() {
       formatDisplayName={formatDisplayName}
       getAvatarInitial={getAvatarInitial}
       getPlayerAvatarStyle={getPlayerAvatarStyle}
+      token={authToken || null}
+      currentPeerId={peerId || null}
+      currentUserBackendId={meBackendUserId}
+      notify={notify}
       onStartGame={() => send({ type: "start-game" })}
     />
   );
@@ -1065,6 +1177,7 @@ export default function RoomPage() {
         votesLabel={votesLabel}
         captainSectorLabel={captainSectorLabel}
         captainSectorTextClass={captainSectorTextClass}
+        teamLabel={teamLabel}
       />
     ) : null
   );
@@ -1173,17 +1286,33 @@ export default function RoomPage() {
               Комната QuizBattle
             </h1>
             {isRegisteredUser ? (
-              <div className="ml-auto flex flex-col items-end gap-1.5">
+              <div className="ml-auto flex flex-row items-center gap-2">
+                <FriendsBtn
+                  token={authToken}
+                  showLabel
+                  hasRequestsOverride={badgeHasRequests}
+                  inviteRoomId={pin}
+                  canInviteToRoom={
+                    roomState?.phase === "lobby" &&
+                    (!roomState?.hasPassword || effectiveIsHost)
+                  }
+                  inviteDisabledReason={
+                    roomState?.phase !== "lobby"
+                      ? "Во время игры приглашать друзей нельзя."
+                      : "В комнате с паролем приглашать друзей может только ведущий."
+                  }
+                  onModalClose={() => setBadgeHasRequests(false)}
+                />
                 <button
                   type="button"
                   onClick={() => setIsShopOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-300/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
                   title="Магазин"
                 >
                   <Store className="h-4 w-4 shrink-0" />
                   <span className="max-[520px]:hidden">Магазин</span>
                 </button>
-                <div className="inline-flex items-center gap-1 rounded-full border border-amber-300/45 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-100">
+                <div className="inline-flex items-center gap-1 rounded-xl border border-amber-300/45 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-100">
                   <span>⭐</span>
                   <span>{displayCoins}</span>
                 </div>
@@ -1263,21 +1392,39 @@ export default function RoomPage() {
               }`}
             >
               <div className="flex h-full min-w-0 flex-col justify-end p-1 pb-1">
-                <h3 className="-mt-1 text-lg font-semibold">
-                  {isFfaMode ? "Чат ожидания" : "Чат команды"}
-                </h3>
-                <p className="mt-[5px] text-xs text-white/60">
-                  {isFfaMode
-                    ? effectiveIsHost || effectiveIsSpectator
-                      ? "В FFA у ведущего чат всегда открыт."
-                      : "В FFA чат откроется после вашего ответа на текущий вопрос."
-                    : "В фазе вопроса чат активен только у отвечающей команды."}
-                </p>
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="-mt-1 text-lg font-semibold">
+                    {showPlayerList ? "Участники" : (isFfaMode ? "Чат ожидания" : "Чат команды")}
+                  </h3>
+                  {(roomState?.players?.length || 0) > 0 && roomState?.phase !== "lobby" && (
+                    <button
+                      onClick={() => setShowPlayerList(!showPlayerList)}
+                      className={`px-2 py-1 rounded text-xs font-medium transition-colors ml-auto ${
+                        showPlayerList
+                          ? "bg-cyan-600 text-white"
+                          : "bg-white/10 text-white/70 hover:bg-white/20"
+                      }`}
+                      title="Переключить между чатом и списком участников"
+                    >
+                      <Users size={14} className="inline mr-1" />
+                      Список
+                    </button>
+                  )}
+                </div>
+                {!showPlayerList && (
+                  <p className="mt-[5px] text-xs text-white/60">
+                    {isFfaMode
+                      ? effectiveIsHost || effectiveIsSpectator
+                        ? "В FFA у ведущего чат всегда открыт."
+                        : "В FFA чат откроется после вашего ответа на текущий вопрос."
+                      : "В фазе вопроса чат активен только у отвечающей команды."}
+                  </p>
+                )}
               </div>
 
               {showMascot ? (
                 <div className="-mt-3 flex min-w-0 flex-col p-1">
-                  <div className="relative mx-auto h-[82px] w-[66px] overflow-hidden sm:h-[104px] sm:w-[84px] 2xl:h-[118px] 2xl:w-[96px]">
+                  <div className="relative mx-auto h-[82px] w-[66px] overflow-visible sm:h-[104px] sm:w-[84px] 2xl:h-[118px] 2xl:w-[96px]">
                     <MascotFramePlayer
                       frames={mascotFrames}
                       overlayFrames={getMascotOverlayFrames(mascotKind, mascotMood, peerId)}
@@ -1294,185 +1441,235 @@ export default function RoomPage() {
             </div>
 
             <div className="mt-3 h-72 min-w-0 space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-black/30 p-3 text-sm [scrollbar-width:thin] [scrollbar-color:rgba(56,189,248,0.75)_rgba(255,255,255,0.12)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gradient-to-b [&::-webkit-scrollbar-thumb]:from-cyan-400/90 [&::-webkit-scrollbar-thumb]:via-sky-500/90 [&::-webkit-scrollbar-thumb]:to-indigo-500/90 [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-white/20 max-[424px]:p-2 sm:h-80 2xl:h-[26rem] [@media(min-width:2200px)]:h-[34rem]">
-              {canReadChatNow
-                ? visibleChatMessages.map((message) => {
-                    const isHostMessage =
-                      !!hostPlayer?.peerId && !!message.from && message.from === hostPlayer.peerId;
-                    const senderTeam = useTeamChatColors
-                      ? playerTeamByPeerId.get(message.from) || null
-                      : null;
-                    const isTeamA = senderTeam === "A";
-                    const isTeamB = senderTeam === "B";
-                    const messageCardClass = isHostMessage
-                      ? "border border-amber-300/45 bg-amber-500/20"
-                      : isTeamA
-                      ? "border border-sky-300/35 bg-sky-500/15"
-                      : isTeamB
-                      ? "border border-rose-300/35 bg-rose-500/15"
-                      : "bg-white/10";
-                    const messageMetaClass = isHostMessage
-                      ? "text-amber-100/95"
-                      : isTeamA
-                      ? "text-sky-200/90"
-                      : isTeamB
-                      ? "text-rose-200/90"
-                      : "text-white/65";
-                    const messageTextClass = isHostMessage
-                      ? "text-amber-50"
-                      : isTeamA
-                      ? "text-sky-100"
-                      : isTeamB
-                      ? "text-rose-100"
-                      : "text-white/90";
-                    const messagePlayer = playerByPeerId.get(message.from || "") || null;
-                    const canModerateMessage =
-                      effectiveIsHost &&
-                      roomState?.phase !== "lobby" &&
-                      message.from !== "system" &&
-                      !!message.from &&
-                      message.from !== peerId &&
-                      message.kind !== "skip-request";
+              {showPlayerList ? (
+                <PlayerList 
+                  players={(roomState?.players || []).map(p => ({
+                    peerId: p.peerId,
+                    authUserId: p.authUserId,
+                    name: p.name,
+                    avatar: p.avatar || undefined,
+                    isHost: p.isHost,
+                    team: p.team,
+                    isSpectator: p.isSpectator,
+                  }))}
+                  teamNames={roomState?.teamNames}
+                  currentUserId={peerId || undefined}
+                  currentUserBackendId={meBackendUserId || undefined}
+                  notify={notify}
+                  refreshKey={friendRefreshKey}
+                />
+              ) : (
+                <>
+                  {canReadChatNow ? (
+                    visibleChatMessages.map((message) => {
+                      const isHostMessage =
+                        !!hostPlayer?.peerId && !!message.from && message.from === hostPlayer.peerId;
+                      const senderTeam = useTeamChatColors
+                        ? playerTeamByPeerId.get(message.from) || null
+                        : null;
+                      const isTeamA = senderTeam === "A";
+                      const isTeamB = senderTeam === "B";
+                      const messageCardClass = isHostMessage
+                        ? "border border-amber-300/45 bg-amber-500/20"
+                        : isTeamA
+                        ? "border border-sky-300/35 bg-sky-500/15"
+                        : isTeamB
+                        ? "border border-rose-300/35 bg-rose-500/15"
+                        : "bg-white/10";
+                      const messageMetaClass = isHostMessage
+                        ? "text-amber-100/95"
+                        : isTeamA
+                        ? "text-sky-200/90"
+                        : isTeamB
+                        ? "text-rose-200/90"
+                        : "text-white/65";
+                      const messageTextClass = isHostMessage
+                        ? "text-amber-50"
+                        : isTeamA
+                        ? "text-sky-100"
+                        : isTeamB
+                        ? "text-rose-100"
+                        : "text-white/90";
+                      const messagePlayer = playerByPeerId.get(message.from || "") || null;
+                      const canModerateMessage =
+                        effectiveIsHost &&
+                        roomState?.phase !== "lobby" &&
+                        message.from !== "system" &&
+                        !!message.from &&
+                        message.from !== peerId &&
+                        message.kind !== "skip-request";
 
-                    return (
-                      <div key={message.id} className={`min-w-0 rounded-lg p-2 ${messageCardClass}`}>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex min-w-0 items-start gap-3">
-                            {message.from !== "system" ? (
-                              <Frame
-                                frameId={messagePlayer?.profileFrame || null}
-                                className="mt-0.5 h-7 w-7 shrink-0"
-                                radiusClass="rounded-full"
-                                innerClassName="p-0"
-                              >
-                                <span
-                                  className="inline-flex h-full w-full items-center justify-center rounded-full text-[10px] font-semibold text-white"
-                                  style={
-                                    getPlayerAvatarStyle(
-                                      messagePlayer || {
-                                        peerId: "",
-                                        name: message.name,
-                                        team: null,
-                                        isHost: false,
-                                        avatar: null,
-                                      },
-                                      roomState?.phase
-                                    ) as CSSProperties
-                                  }
+                      return (
+                        <div key={message.id} className={`min-w-0 rounded-lg p-2 ${messageCardClass}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex min-w-0 items-start gap-3">
+                              {message.from !== "system" ? (
+                                <Frame
+                                  frameId={messagePlayer?.profileFrame || null}
+                                  className="mt-0.5 h-7 w-7 shrink-0"
+                                  radiusClass="rounded-full"
+                                  innerClassName="p-0"
+                                  tuningVariant="room"
                                 >
-                                  {!messagePlayer?.avatar ? getAvatarInitial(message.name) : ""}
-                                </span>
-                              </Frame>
-                            ) : null}
-                            <div className="min-w-0">
-                              <p className={`text-xs ${messageMetaClass}`}>
-                                {formatDisplayName(message.name, message.from)} •{" "}
-                                {new Date(message.timestamp).toLocaleTimeString("ru-RU", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </p>
-                              <p className={`break-words ${messageTextClass}`}>{message.text}</p>
+                                  <span
+                                    className="inline-flex h-full w-full items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                                    style={
+                                      getPlayerAvatarStyle(
+                                        messagePlayer || {
+                                          peerId: "",
+                                          name: message.name,
+                                          team: null,
+                                          isHost: false,
+                                          avatar: null,
+                                        },
+                                        roomState?.phase
+                                      ) as CSSProperties
+                                    }
+                                  >
+                                    {!messagePlayer?.avatar ? getAvatarInitial(message.name) : ""}
+                                  </span>
+                                </Frame>
+                              ) : null}
+                              <div className="min-w-0">
+                                <p className={`text-xs ${messageMetaClass}`}>
+                                  {formatDisplayName(message.name, message.from)} •{" "}
+                                  {new Date(message.timestamp).toLocaleTimeString("ru-RU", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </p>
+                                <p className={`break-words ${messageTextClass}`}>{message.text}</p>
+                              </div>
                             </div>
+                            {canModerateMessage ? (
+                              <button
+                                type="button"
+                                onClick={() => moderateChatMessage(message.id)}
+                                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-red-300/55 bg-red-500/10 text-red-200 transition hover:bg-red-500/25"
+                                aria-label="Удалить сообщение и выдать бан"
+                                title="Удалить сообщение и выдать бан"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
                           </div>
-                          {canModerateMessage ? (
-                            <button
-                              type="button"
-                              onClick={() => moderateChatMessage(message.id)}
-                              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-red-300/55 bg-red-500/10 text-red-200 transition hover:bg-red-500/25"
-                              aria-label="Удалить сообщение и выдать бан"
-                              title="Удалить сообщение и выдать бан"
-                            >
-                              <Ban className="h-3.5 w-3.5" />
-                            </button>
+                          {effectiveIsHost &&
+                          roomState?.phase === "question" &&
+                          roomState?.skipRequest?.status === "pending" &&
+                          roomState?.skipRequest?.messageId === message.id &&
+                          message.kind === "skip-request" ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => resolveSkipQuestionRequest("reject")}
+                                className="rounded-lg border border-slate-300/55 bg-slate-500/15 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-slate-500/25"
+                              >
+                                Отмена
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => resolveSkipQuestionRequest("approve")}
+                                className="rounded-lg border border-emerald-300/60 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
+                              >
+                                OK
+                              </button>
+                            </div>
                           ) : null}
                         </div>
-                        {effectiveIsHost &&
-                        roomState?.phase === "question" &&
-                        roomState?.skipRequest?.status === "pending" &&
-                        roomState?.skipRequest?.messageId === message.id &&
-                        message.kind === "skip-request" ? (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => resolveSkipQuestionRequest("reject")}
-                              className="rounded-lg border border-slate-300/55 bg-slate-500/15 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-slate-500/25"
-                            >
-                              Отмена
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => resolveSkipQuestionRequest("approve")}
-                              className="rounded-lg border border-emerald-300/60 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/30"
-                            >
-                              OK
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                : null}
-              {canReadChatNow && !visibleChatMessages.length ? (
-                <p className="text-white/50">Сообщений пока нет</p>
-              ) : null}
-              {!canReadChatNow ? (
-                <p className="text-white/60">
-                  {isFfaMode
-                    ? effectiveIsHost
-                      ? "Чат доступен только ведущему."
-                      : "Чат закрыт. Ответьте на вопрос и используйте кнопку «Попросить пропустить», если нужно."
-                    : (
-                      <>
-                        Чат временно заблокирован. Сейчас отвечает{" "}
-                        {roomState ? teamLabel(roomState.activeTeam) : "другая команда"}.
-                      </>
-                    )}
-                </p>
-              ) : null}
+                      );
+                    })
+                  ) : null}
+                  {canReadChatNow && !visibleChatMessages.length && (
+                    <p className="text-white/50">Сообщений пока нет</p>
+                  )}
+                  {!canReadChatNow && (
+                    <p className="text-white/60">
+                      {isFfaMode
+                        ? effectiveIsHost
+                          ? "Чат доступен только ведущему."
+                          : "Чат закрыт. Ответьте на вопрос и используйте кнопку «Попросить пропустить», если нужно."
+                        : (
+                          <>
+                            Чат временно заблокирован. Сейчас отвечает{" "}
+                            {roomState ? teamLabel(roomState.activeTeam) : "другая команда"}.
+                          </>
+                        )}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
-            <div className="mt-3 flex min-w-0 gap-2">
-              <input
-                value={chatText}
-                onChange={(e) => setChatText(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendChat()}
-                placeholder={
-                  !isSocketReady
-                    ? "Нет подключения к WS"
-                    : effectiveIsSpectator
-                    ? "Режим зрителя: чат только для чтения"
-                    : canWriteChatNow
-                    ? "Сообщение"
-                    : "Чат сейчас недоступен"
-                }
-                className="min-w-0 flex-1 rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white placeholder:text-white/60 outline-none transition focus:border-white/50"
-              />
-              <button
-                onClick={sendChat}
-                disabled={!canWriteChatNow}
-                aria-label="Отправить сообщение"
-                title="Отправить сообщение"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 shadow-lg shadow-emerald-900/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M22 2L11 13"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M22 2L15 22L11 13L2 9L22 2Z"
-                  />
-                </svg>
-              </button>
-            </div>
+            {!showPlayerList ? (
+              <div className="mt-3 flex min-w-0 gap-2">
+                <input
+                  value={chatText}
+                  onChange={(e) => setChatText(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                  placeholder={
+                    !isSocketReady
+                      ? "Нет подключения к WS"
+                      : effectiveIsSpectator
+                      ? "Режим зрителя: чат только для чтения"
+                      : canWriteChatNow
+                      ? "Сообщение"
+                      : "Чат сейчас недоступен"
+                  }
+                  className="min-w-0 flex-1 rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white placeholder:text-white/60 outline-none transition focus:border-white/50"
+                />
+                <button
+                  onClick={sendChat}
+                  disabled={!canWriteChatNow}
+                  aria-label="Отправить сообщение"
+                  title="Отправить сообщение"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-green-500 via-emerald-500 to-green-600 shadow-lg shadow-emerald-900/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M22 2L11 13"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M22 2L15 22L11 13L2 9L22 2Z"
+                    />
+                  </svg>
+                </button>
+              </div>
+            ) : null}
           </aside>
         </div>
       </div>
+
+      {hostApproval ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <section className="w-full max-w-md rounded-3xl border border-white/25 bg-slate-950/90 p-5 shadow-2xl shadow-cyan-950/40 sm:p-6">
+            <h3 className="text-xl font-bold text-white">Одобрить приглашение?</h3>
+            <p className="mt-2 text-sm text-white/75">
+              <span className="font-semibold">{hostApproval.inviter_name}</span> приглашает{" "}
+              <span className="font-semibold">{hostApproval.invitee_name}</span> в комнату.
+            </p>
+            <div className="mt-6 flex gap-2 sm:justify-end">
+              <button
+                onClick={() => respondHostApproval(false)}
+                className="rounded-xl border border-white/25 bg-white/10 px-4 py-2 font-semibold text-white transition hover:bg-white/20"
+              >
+                Отклонить
+              </button>
+              <button
+                onClick={() => respondHostApproval(true)}
+                className="rounded-xl bg-emerald-600 px-4 py-2 font-semibold text-white transition hover:bg-emerald-500"
+              >
+                Одобрить
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {isSkipQuestionModalOpen ? (
         <div

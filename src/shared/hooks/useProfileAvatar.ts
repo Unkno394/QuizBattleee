@@ -15,6 +15,7 @@ const getStoredAccessToken = () => {
 export function useProfileAvatar() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
+  const [preferredMascot, setPreferredMascot] = useState<"cat" | "dog" | null>(null);
   const [coins, setCoins] = useState<number>(0);
   const [profileFrame, setProfileFrame] = useState<string | null>(null);
   const [equippedCatSkin, setEquippedCatSkin] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export function useProfileAvatar() {
         if (isCancelled) return;
         setDisplayName(response.user.display_name || null);
         setAvatarUrl(response.user.avatar_url || null);
+        setPreferredMascot(response.user.preferred_mascot || null);
         setCoins(Number(response.user.coins || 0));
         setProfileFrame(response.user.profile_frame || null);
         setEquippedCatSkin(response.user.equipped_cat_skin || null);
@@ -48,6 +50,7 @@ export function useProfileAvatar() {
         if (isCancelled) return;
         setDisplayName(null);
         setAvatarUrl(null);
+        setPreferredMascot(null);
         setCoins(0);
         setProfileFrame(null);
         setEquippedCatSkin(null);
@@ -64,6 +67,7 @@ export function useProfileAvatar() {
   return {
     avatarUrl,
     displayName,
+    preferredMascot,
     coins,
     profileFrame,
     equippedCatSkin,

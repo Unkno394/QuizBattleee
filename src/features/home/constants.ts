@@ -2,11 +2,19 @@ import type { DifficultyMode, GameMode } from "./types";
 
 export const QUESTION_COUNT_OPTIONS = [5, 6, 7] as const;
 export const TOPIC_OPTIONS = [
-  "Искусственный интеллект",
-  "Киберпанк в кино",
-  "История технологий",
-  "Кибербезопасность",
+  "Кино и сериалы",
+  "Музыка",
+  "Игры",
+  "Спорт",
+  "История",
+  "География",
+  "Наука и технологии",
+  "Космос",
+  "Литература",
+  "Еда и напитки",
+  "Мемы и интернет",
   "Общая эрудиция",
+  "Математика",
 ] as const;
 
 export const DIFFICULTY_OPTIONS: Array<{

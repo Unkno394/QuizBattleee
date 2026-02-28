@@ -288,17 +288,6 @@ async def handle_message(
 
         await runtime._broadcast_and_persist(room)
     if message_type == "invite-friend-to-room":
-        # Only host can invite friends if room is password-protected
-        # Any player can invite friends if room is not password-protected
-        room_has_password = room.password is not None and room.password != ""
-        
-        if room_has_password and not player.is_host:
-            return
-        
-        friend_id = data.get("friendId")
-        if not friend_id:
-            return
-        
-        # Send invitation notification to friend through WebSocket
-        await runtime._send_room_invitation(room, player, friend_id)
+        # Security hardening: room invitations must go through HTTP endpoints
+        # with strict auth/host/friendship checks in api/friends.py.
         return

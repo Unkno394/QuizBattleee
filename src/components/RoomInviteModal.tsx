@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Heart, Send, X } from "lucide-react";
+import { fetchApi, toBearerToken } from "@/shared/api/base";
 
 interface Friend {
   id: number;
@@ -42,8 +43,8 @@ export default function RoomInviteModal({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/friends", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchApi("/api/friends", {
+        headers: { Authorization: toBearerToken(token) },
       });
       if (res.ok) {
         const data = await res.json();
@@ -60,11 +61,11 @@ export default function RoomInviteModal({
     if (!selectedFriend || !token) return;
 
     try {
-      const res = await fetch("/api/rooms/invite", {
+      const res = await fetchApi("/api/rooms/invite", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: toBearerToken(token),
         },
         body: JSON.stringify({
           friend_id: selectedFriend,
@@ -81,7 +82,11 @@ export default function RoomInviteModal({
       }
     } catch (error) {
       console.error("Failed to send invite:", error);
-      setMessage("Ошибка при отправке приглашения");
+      if (error instanceof Error && /failed to fetch|networkerror/i.test(error.message)) {
+        setMessage("Нет соединения с сервером (порт 3001)");
+      } else {
+        setMessage("Ошибка при отправке приглашения");
+      }
     }
   };
 
