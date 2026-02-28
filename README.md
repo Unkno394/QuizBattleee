@@ -8,6 +8,9 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?logo=tailwindcss&logoColor=white)
 
+ссылка на прод:
+[https://yourpasswordforemail.ru/](https://yourpasswordforemail.ru/)
+
 QuizBattle — это онлайн-квиз с realtime-комнатами, системой аккаунтов, друзьями и приглашениями, косметикой профиля, рейтингом и одиночным режимом `quick-game`.
 
 Фронтенд: `Next.js 16 + React 19 + TypeScript + Tailwind`
@@ -111,6 +114,7 @@ QuizBattle поддерживает два источника вопросов:
 Временные файлы с AI-сгенерированными вопросами автоматически удаляются после завершения игры или очистки комнаты.
 
 <div align="center">
+  <h2>КОМАНДА РАЗРАБОТЧИКОВ</h2>
   <table>
     <tr>
       <td align="center">
