@@ -439,8 +439,7 @@ export default function RoomPage() {
     roomState.phase !== "lobby" &&
     roomState.phase !== "results" &&
     !effectiveIsSpectator &&
-    !isTeamRevealCountdownVisible &&
-    !isLowPerformanceMode;
+    !isTeamRevealCountdownVisible;
 
   const captainVoteLeft = roomState?.captainVoteEndsAt
     ? Math.max(0, Math.ceil((roomState.captainVoteEndsAt - (now + serverOffset)) / 1000))

@@ -77,8 +77,8 @@ services:
     depends_on:
       - backend-python
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost
-      NEXT_PUBLIC_WS_URL: ws://localhost/api/ws
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost/api/ws}
     expose:
       - "3000"
     mem_limit: 640m

@@ -20,6 +20,11 @@ html, body, #__next {
   padding: 0;
 }
 
+html {
+  background: #050816;
+  overflow-x: hidden;
+}
+
 canvas {
   display: block;
 }
@@ -27,6 +32,11 @@ canvas {
 /* Основной шрифт страницы - Montserrat Alternates для всего */
 body {
   font-family: var(--font-montserrat-alternates) !important;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: transparent;
+  color: var(--foreground);
+  overflow-x: hidden;
 }
 
 /* Исключение ТОЛЬКО для логотипа Visio */

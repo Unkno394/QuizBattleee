@@ -177,6 +177,8 @@ export default function AnimatedBackground({
       const w = window.innerWidth;
       const h = window.innerHeight;
       renderer.setSize(w * effectiveResolutionScale, h * effectiveResolutionScale);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
       program.uniforms.uResolution.value.set(w, h);
     };
     let resizeFrame = 0;
